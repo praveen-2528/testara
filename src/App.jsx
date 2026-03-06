@@ -1,5 +1,5 @@
 import React from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { ExamProvider } from './context/ExamContext';
 import { RoomProvider } from './context/RoomContext';
@@ -15,12 +15,18 @@ import Settings from './pages/Settings';
 import GlobalLeaderboard from './pages/GlobalLeaderboard';
 import QuestionBank from './pages/QuestionBank';
 import MockBuilder from './pages/MockBuilder';
+import AIGenerator from './pages/AIGenerator';
 import './App.css';
 
 const ProtectedRoute = ({ children }) => {
   const { isAuthenticated, loading } = useAuth();
+  const location = useLocation();
   if (loading) return <div className="loading-screen"><div className="loading-spinner" /></div>;
-  return isAuthenticated ? children : <Navigate to="/login" replace />;
+  if (!isAuthenticated) {
+    // Save intended destination (e.g. /lobby?room=CODE) so Login can redirect back
+    return <Navigate to="/login" state={{ from: location.pathname + location.search }} replace />;
+  }
+  return children;
 };
 
 function AppRoutes() {
@@ -38,6 +44,7 @@ function AppRoutes() {
       <Route path="/global-leaderboard" element={<ProtectedRoute><GlobalLeaderboard /></ProtectedRoute>} />
       <Route path="/question-bank" element={<ProtectedRoute><QuestionBank /></ProtectedRoute>} />
       <Route path="/mock-builder" element={<ProtectedRoute><MockBuilder /></ProtectedRoute>} />
+      <Route path="/ai-generator" element={<ProtectedRoute><AIGenerator /></ProtectedRoute>} />
     </Routes>
   );
 }

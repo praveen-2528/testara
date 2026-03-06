@@ -5,6 +5,8 @@ import cors from 'cors';
 import { nanoid } from 'nanoid';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
+import { Tunnel } from 'cloudflared';
+import os from 'os';
 import db from './db.js';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'mockify_secret_key_change_in_production';
@@ -57,10 +59,149 @@ const verifyToken = (req, res, next) => {
     }
 };
 
+// ─── Tunnel State ────────────────────────────────────────────────────
+let tunnelProcess = null;
+let tunnelUrl = null;
+let shortUrl = null;
+
+// Helper: shorten URL (try multiple free services, no API key needed)
+async function shortenUrl(longUrl) {
+    if (!longUrl) return null;
+    // Try TinyURL
+    try {
+        const resp = await fetch(`https://tinyurl.com/api-create.php?url=${encodeURIComponent(longUrl)}`);
+        if (resp.ok) {
+            const shortened = (await resp.text()).trim();
+            if (shortened.startsWith('http')) {
+                console.log('[Shorten] TinyURL success:', shortened);
+                return shortened;
+            }
+        }
+    } catch (e) {
+        console.log('[Shorten] TinyURL failed:', e.message);
+    }
+    // Try is.gd
+    try {
+        const resp = await fetch(`https://is.gd/create.php?format=simple&url=${encodeURIComponent(longUrl)}`);
+        if (resp.ok) {
+            const shortened = (await resp.text()).trim();
+            if (shortened.startsWith('http')) {
+                console.log('[Shorten] is.gd success:', shortened);
+                return shortened;
+            }
+        }
+    } catch (e) {
+        console.log('[Shorten] is.gd failed:', e.message);
+    }
+    console.log('[Shorten] All shorteners failed, using full URL');
+    return longUrl; // fallback to full URL
+}
+
 // ─── REST Endpoints ──────────────────────────────────────────────────
 app.get('/api/health', (_req, res) => {
     res.json({ status: 'ok', rooms: rooms.size });
 });
+
+// ── Network Info: Return LAN IP addresses for sharing ───────────────
+app.get('/api/network-info', (_req, res) => {
+    const interfaces = os.networkInterfaces();
+    const addresses = [];
+    for (const [name, nets] of Object.entries(interfaces)) {
+        for (const net of nets) {
+            if (net.family === 'IPv4' && !net.internal) {
+                addresses.push({ name, address: net.address });
+            }
+        }
+    }
+    res.json({ addresses });
+});
+
+// ── Tunnel: Start (Cloudflare Quick Tunnel — no password!) ──────────
+app.post('/api/tunnel/start', async (_req, res) => {
+    if (tunnelProcess && tunnelUrl) {
+        return res.json({ success: true, url: tunnelUrl, shortUrl });
+    }
+    // Clean up stale process if URL was lost
+    if (tunnelProcess && !tunnelUrl) {
+        try { tunnelProcess.stop(); } catch { }
+        tunnelProcess = null;
+    }
+    try {
+        console.log('[Tunnel] Starting Cloudflare tunnel...');
+
+        // Point tunnel to Vite dev server (5173) which serves frontend + proxies API/socket to Express
+        const VITE_PORT = 5173;
+        const t = Tunnel.quick(`http://localhost:${VITE_PORT}`);
+
+        // Wait for the URL event from cloudflared
+        const cfUrl = await new Promise((resolve, reject) => {
+            const timeout = setTimeout(() => {
+                reject(new Error('Tunnel URL timed out after 30 seconds.'));
+            }, 30000);
+
+            t.once('url', (url) => {
+                clearTimeout(timeout);
+                console.log(`[Tunnel] Got URL: ${url}`);
+                resolve(url);
+            });
+
+            t.once('error', (err) => {
+                clearTimeout(timeout);
+                reject(err);
+            });
+
+            t.once('exit', (code) => {
+                clearTimeout(timeout);
+                reject(new Error(`Tunnel process exited with code ${code}`));
+            });
+        });
+
+        tunnelUrl = cfUrl;
+        tunnelProcess = t;
+
+        console.log(`[Tunnel] Online at ${tunnelUrl}`);
+
+        // Shorten the invite URL
+        shortUrl = await shortenUrl(tunnelUrl);
+        console.log(`[Tunnel] Short URL: ${shortUrl}`);
+
+        // Monitor for tunnel close
+        t.on('exit', () => {
+            tunnelProcess = null;
+            tunnelUrl = null;
+            shortUrl = null;
+            console.log('[Tunnel] Closed.');
+        });
+
+        res.json({ success: true, url: tunnelUrl, shortUrl });
+    } catch (err) {
+        console.error('[Tunnel] Failed to start:', err.message);
+        // Clean up on failure
+        if (tunnelProcess && !tunnelUrl) {
+            try { tunnelProcess.stop(); } catch { }
+            tunnelProcess = null;
+        }
+        res.status(500).json({ success: false, error: 'Failed to create tunnel: ' + err.message });
+    }
+});
+
+// ── Tunnel: Status ──────────────────────────────────────────────────
+app.get('/api/tunnel/status', (_req, res) => {
+    const active = !!(tunnelProcess && tunnelUrl);
+    res.json({ active, url: tunnelUrl, shortUrl });
+});
+
+// ── Tunnel: Stop ────────────────────────────────────────────────────
+app.post('/api/tunnel/stop', (_req, res) => {
+    if (tunnelProcess) {
+        try { tunnelProcess.stop(); } catch { }
+        tunnelProcess = null;
+        tunnelUrl = null;
+        shortUrl = null;
+    }
+    res.json({ success: true });
+});
+
 
 // ── Auth: Register ───────────────────────────────────────────────────
 app.post('/api/auth/register', (req, res) => {
@@ -211,7 +352,7 @@ app.get('/api/leaderboard', (req, res) => {
 
 // ── Questions: List (with filters) ──────────────────────────────────
 app.get('/api/questions', verifyToken, (req, res) => {
-    const { subject, search, page = 1 } = req.query;
+    const { subject, search, difficulty, topic, page = 1 } = req.query;
     const limit = 50;
     const offset = (parseInt(page) - 1) * limit;
 
@@ -219,6 +360,8 @@ app.get('/api/questions', verifyToken, (req, res) => {
     const params = [req.userId];
 
     if (subject) { where += ' AND subject = ?'; params.push(subject); }
+    if (difficulty) { where += ' AND difficulty = ?'; params.push(difficulty); }
+    if (topic) { where += ' AND topic = ?'; params.push(topic); }
     if (search) { where += ' AND question_text LIKE ?'; params.push(`%${search}%`); }
 
     const total = db.prepare(`SELECT COUNT(*) as count FROM questions ${where}`).get(...params).count;
@@ -231,28 +374,31 @@ app.get('/api/questions', verifyToken, (req, res) => {
         correctAnswer: r.correct_answer,
         explanation: r.explanation,
         subject: r.subject,
+        topic: r.topic || '',
         subtopic: r.subtopic,
         difficulty: r.difficulty,
+        questionType: r.question_type || 'MCQ',
         examType: r.exam_type,
     }));
 
     const subjects = db.prepare('SELECT DISTINCT subject FROM questions WHERE user_id = ? ORDER BY subject').all(req.userId).map(r => r.subject);
+    const topics = db.prepare('SELECT DISTINCT topic FROM questions WHERE user_id = ? AND topic != "" ORDER BY topic').all(req.userId).map(r => r.topic);
 
-    res.json({ questions, total, subjects, page: parseInt(page), pages: Math.ceil(total / limit) });
+    res.json({ questions, total, subjects, topics, page: parseInt(page), pages: Math.ceil(total / limit) });
 });
 
 // ── Questions: Add Single ───────────────────────────────────────────
 app.post('/api/questions', verifyToken, (req, res) => {
-    const { text, options, correctAnswer, explanation, subject, subtopic, difficulty, examType } = req.body;
+    const { text, options, correctAnswer, explanation, subject, topic, subtopic, difficulty, questionType, examType } = req.body;
 
     if (!text || !options || correctAnswer === undefined) {
         return res.status(400).json({ error: 'Question text, options, and correct answer are required.' });
     }
 
     const result = db.prepare(`
-        INSERT INTO questions (user_id, question_text, options, correct_answer, explanation, subject, subtopic, difficulty, exam_type)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(req.userId, text, JSON.stringify(options), correctAnswer, explanation || '', subject || 'General', subtopic || '', difficulty || 'medium', examType || 'ssc');
+        INSERT INTO questions (user_id, question_text, options, correct_answer, explanation, subject, topic, subtopic, difficulty, question_type, exam_type)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(req.userId, text, JSON.stringify(options), correctAnswer, explanation || '', subject || 'General', topic || '', subtopic || '', difficulty || 'medium', questionType || 'MCQ', examType || 'ssc');
 
     res.status(201).json({ id: result.lastInsertRowid });
 });
@@ -265,8 +411,8 @@ app.post('/api/questions/bulk', verifyToken, (req, res) => {
     }
 
     const stmt = db.prepare(`
-        INSERT INTO questions (user_id, question_text, options, correct_answer, explanation, subject, subtopic, difficulty, exam_type)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO questions (user_id, question_text, options, correct_answer, explanation, subject, topic, subtopic, difficulty, question_type, exam_type)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     const insertMany = db.transaction((items) => {
@@ -288,7 +434,7 @@ app.post('/api/questions/bulk', verifyToken, (req, res) => {
 
             stmt.run(
                 req.userId, text, JSON.stringify(options), correctAnswer,
-                explanation, q.subject || q.subtopic || 'General', q.subtopic || '', q.difficulty || 'medium', q.exam_type || 'ssc'
+                explanation, q.subject || q.subtopic || 'General', q.topic || '', q.subtopic || '', q.difficulty || 'medium', q.questionType || q.question_type || 'MCQ', q.examType || q.exam_type || 'ssc'
             );
             count++;
         }
@@ -301,14 +447,14 @@ app.post('/api/questions/bulk', verifyToken, (req, res) => {
 
 // ── Questions: Update ───────────────────────────────────────────────
 app.put('/api/questions/:id', verifyToken, (req, res) => {
-    const { text, options, correctAnswer, explanation, subject, subtopic, difficulty } = req.body;
+    const { text, options, correctAnswer, explanation, subject, topic, subtopic, difficulty, questionType } = req.body;
     const q = db.prepare('SELECT id FROM questions WHERE id = ? AND user_id = ?').get(req.params.id, req.userId);
     if (!q) return res.status(404).json({ error: 'Question not found.' });
 
     db.prepare(`
-        UPDATE questions SET question_text=?, options=?, correct_answer=?, explanation=?, subject=?, subtopic=?, difficulty=?
+        UPDATE questions SET question_text=?, options=?, correct_answer=?, explanation=?, subject=?, topic=?, subtopic=?, difficulty=?, question_type=?
         WHERE id=? AND user_id=?
-    `).run(text, JSON.stringify(options), correctAnswer, explanation || '', subject || 'General', subtopic || '', difficulty || 'medium', req.params.id, req.userId);
+    `).run(text, JSON.stringify(options), correctAnswer, explanation || '', subject || 'General', topic || '', subtopic || '', difficulty || 'medium', questionType || 'MCQ', req.params.id, req.userId);
 
     res.json({ success: true });
 });
@@ -341,10 +487,149 @@ app.post('/api/questions/generate', verifyToken, (req, res) => {
         correctAnswer: r.correct_answer,
         explanation: r.explanation,
         subject: r.subject,
+        topic: r.topic || '',
         subtopic: r.subtopic,
+        difficulty: r.difficulty,
+        questionType: r.question_type || 'MCQ',
     }));
 
     res.json({ questions });
+});
+
+// ── Questions: Generate for Room (with exam_type filter) ────────────
+app.post('/api/questions/generate-for-room', verifyToken, (req, res) => {
+    const { examType, subject, topic, count = 25 } = req.body;
+    let where = 'WHERE user_id = ?';
+    const params = [req.userId];
+
+    if (examType && examType !== 'all') { where += ' AND exam_type = ?'; params.push(examType); }
+    if (subject && subject !== 'all') { where += ' AND subject = ?'; params.push(subject); }
+    if (topic && topic !== 'all') { where += ' AND topic = ?'; params.push(topic); }
+
+    const rows = db.prepare(`SELECT * FROM questions ${where} ORDER BY RANDOM() LIMIT ?`).all(...params, parseInt(count));
+
+    if (rows.length === 0) {
+        return res.status(404).json({ error: 'No questions found for this selection. Import some questions first.' });
+    }
+
+    const questions = rows.map(r => ({
+        id: r.id,
+        text: r.question_text,
+        options: JSON.parse(r.options),
+        correctAnswer: r.correct_answer,
+        explanation: r.explanation,
+        subject: r.subject,
+        topic: r.topic || '',
+        subtopic: r.subtopic,
+        difficulty: r.difficulty,
+        questionType: r.question_type || 'MCQ',
+    }));
+
+    res.json({ questions, total: questions.length });
+});
+
+const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY || '';
+
+app.post('/api/ai/generate', verifyToken, async (req, res) => {
+    const { subject, topic, count = 10, difficulty = 'medium', examType = 'ssc_cgl_tier1', optionsCount = 4 } = req.body;
+
+    if (!subject) return res.status(400).json({ error: 'Subject is required.' });
+    if (!DEEPSEEK_API_KEY) return res.status(500).json({ error: 'DeepSeek API key not configured. Set DEEPSEEK_API_KEY environment variable.' });
+
+    const safeCount = Math.min(Math.max(parseInt(count) || 10, 1), 50);
+    const optionLetters = Array.from({ length: optionsCount }, (_, i) => String.fromCharCode(65 + i));
+
+    const prompt = `Generate exactly ${safeCount} multiple-choice questions for a competitive exam.
+
+Requirements:
+- Subject: ${subject}
+${topic ? `- Topic: ${topic}` : ''}
+- Difficulty: ${difficulty}
+- Each question must have exactly ${optionsCount} options (${optionLetters.join(', ')})
+- Return ONLY a valid JSON array, no markdown, no explanation
+- Each object must have these exact keys:
+  {
+    "question": "the question text",
+    "options": { ${optionLetters.map(l => `"${l}": "option text"`).join(', ')} },
+    "correct_option": "${optionLetters[0]}",
+    "explanation": "why this is correct",
+    "subject": "${subject}",
+    "topic": "${topic || subject}",
+    "subtopic": "specific subtopic",
+    "difficulty": "${difficulty}",
+    "question_type": "MCQ"
+  }
+
+Return ONLY the JSON array. No other text.`;
+
+    try {
+        const response = await fetch('https://api.deepseek.com/chat/completions', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${DEEPSEEK_API_KEY}`,
+            },
+            body: JSON.stringify({
+                model: 'deepseek-chat',
+                messages: [{ role: 'user', content: prompt }],
+                temperature: 0.7,
+                max_tokens: 8000,
+            }),
+        });
+
+        if (!response.ok) {
+            const errData = await response.text();
+            console.error('DeepSeek API error:', errData);
+            return res.status(502).json({ error: 'DeepSeek API returned an error. Check your API key.' });
+        }
+
+        const data = await response.json();
+        const content = data.choices?.[0]?.message?.content || '';
+
+        // Parse JSON from the response (handle markdown code blocks)
+        let jsonStr = content.trim();
+        if (jsonStr.startsWith('```')) {
+            jsonStr = jsonStr.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
+        }
+
+        const generated = JSON.parse(jsonStr);
+
+        if (!Array.isArray(generated)) {
+            return res.status(500).json({ error: 'AI returned invalid format. Please try again.' });
+        }
+
+        // Normalize to Mockify format
+        const questions = generated.map((q, i) => {
+            const opts = q.options;
+            let optionsArray, correctAnswer;
+            if (Array.isArray(opts)) {
+                optionsArray = opts;
+                correctAnswer = typeof q.correct_option === 'number' ? q.correct_option : 0;
+            } else {
+                const keys = Object.keys(opts).sort();
+                optionsArray = keys.map(k => opts[k]);
+                correctAnswer = keys.indexOf(q.correct_option);
+                if (correctAnswer < 0) correctAnswer = 0;
+            }
+            return {
+                text: q.question || q.text || `Question ${i + 1}`,
+                options: optionsArray,
+                correctAnswer,
+                explanation: q.explanation || '',
+                subject: q.subject || subject,
+                topic: q.topic || topic || '',
+                subtopic: q.subtopic || '',
+                difficulty: q.difficulty || difficulty,
+                questionType: q.question_type || 'MCQ',
+                examType: examType,
+            };
+        });
+
+        res.json({ questions, raw_count: generated.length });
+    } catch (err) {
+        console.error('AI generation error:', err);
+        res.status(500).json({ error: `AI generation failed: ${err.message}` });
+    }
 });
 
 // ── Mocks: Save Full Mock Test ──────────────────────────────────────────────
@@ -696,6 +981,6 @@ function sanitizeRoom(room) {
 
 // ─── Start Server ────────────────────────────────────────────────────
 const PORT = process.env.PORT || 3001;
-httpServer.listen(PORT, () => {
+httpServer.listen(PORT, '0.0.0.0', () => {
     console.log(`\n  🚀 Mockify server running on http://localhost:${PORT}\n`);
 });

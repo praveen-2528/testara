@@ -78,12 +78,23 @@ db.exec(`
 
 // ─── Migrations ─────────────────────────────────────────────────────
 try {
-    // Attempt to add mock_test_id to questions if it doesn't exist
-    // This is for users who already have the older questions table
     db.exec(`ALTER TABLE questions ADD COLUMN mock_test_id INTEGER;`);
     console.log("Migration: Added mock_test_id to questions table");
-} catch (e) {
-    // If it throws, the column already exists, which is fine
-}
+} catch (e) { /* column already exists */ }
+
+try {
+    db.exec(`ALTER TABLE questions ADD COLUMN topic TEXT DEFAULT '';`);
+    console.log("Migration: Added topic to questions table");
+} catch (e) { /* column already exists */ }
+
+try {
+    db.exec(`ALTER TABLE questions ADD COLUMN question_type TEXT DEFAULT 'MCQ';`);
+    console.log("Migration: Added question_type to questions table");
+} catch (e) { /* column already exists */ }
+
+try {
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_questions_topic ON questions(topic);`);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_questions_difficulty ON questions(difficulty);`);
+} catch (e) { /* indexes already exist */ }
 
 export default db;

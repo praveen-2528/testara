@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
@@ -9,6 +9,8 @@ import './Login.css';
 const Login = () => {
     const { login, register } = useAuth();
     const navigate = useNavigate();
+    const location = useLocation();
+    const redirectTo = location.state?.from || '/';
     const [isRegister, setIsRegister] = useState(false);
     const [name, setName] = useState('');
     const [email, setEmail] = useState('');
@@ -28,7 +30,7 @@ const Login = () => {
             } else {
                 await login(email.trim(), password);
             }
-            navigate('/');
+            navigate(redirectTo);
         } catch (err) {
             setError(err.message);
         } finally {

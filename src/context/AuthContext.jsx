@@ -4,7 +4,10 @@ const AuthContext = createContext();
 
 export const useAuth = () => useContext(AuthContext);
 
-const API_URL = `http://${window.location.hostname}:3001`;
+// Detect local vs remote: on tunnel URLs use relative paths (Vite proxies /api to Express)
+const _hostname = window.location.hostname;
+const _isLocal = _hostname === 'localhost' || _hostname === '127.0.0.1' || /^(192\.168\.|10\.|172\.(1[6-9]|2\d|3[01])\.)/.test(_hostname);
+const API_URL = _isLocal ? `http://${_hostname}:3001` : '';
 
 export const AuthProvider = ({ children }) => {
     const [user, setUser] = useState(null);

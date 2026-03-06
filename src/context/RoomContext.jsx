@@ -5,17 +5,24 @@ const RoomContext = createContext();
 
 export const useRoom = () => useContext(RoomContext);
 
-const SOCKET_URL = `http://${window.location.hostname}:3001`;
+// Detect if we're on a local network or accessed remotely (e.g. Cloudflare tunnel)
+const hostname = window.location.hostname;
+const isLocal = hostname === 'localhost' || hostname === '127.0.0.1' || /^(192\.168\.|10\.|172\.(1[6-9]|2\d|3[01])\.)/.test(hostname);
+const LOCAL_SOCKET_URL = isLocal ? `http://${hostname}:3001` : window.location.origin;
 
 export const RoomProvider = ({ children }) => {
-    const [socket, setSocket] = useState(null);
     const [connected, setConnected] = useState(false);
+    const [serverUrl, setServerUrl] = useState(LOCAL_SOCKET_URL);
+    const [tunnelUrl, setTunnelUrl] = useState(null);
+    const [tunnelActive, setTunnelActive] = useState(false);
+    const [tunnelLoading, setTunnelLoading] = useState(false);
+    const [shortUrl, setShortUrl] = useState(null);
     const [roomState, setRoomState] = useState({
         roomCode: null,
         isHost: false,
         hostName: '',
         playerName: '',
-        roomMode: 'friendly', // 'sync' or 'individual'
+        roomMode: 'friendly',
         participants: [],
         started: false,
         examType: null,
@@ -27,9 +34,14 @@ export const RoomProvider = ({ children }) => {
     });
     const socketRef = useRef(null);
 
-    // Connect socket on mount
-    useEffect(() => {
-        const s = io(SOCKET_URL, {
+    // Create or reconnect socket to a given URL
+    const initSocket = useCallback((url) => {
+        // Disconnect existing socket if any
+        if (socketRef.current) {
+            socketRef.current.disconnect();
+        }
+
+        const s = io(url, {
             autoConnect: false,
             transports: ['websocket', 'polling'],
         });
@@ -61,11 +73,29 @@ export const RoomProvider = ({ children }) => {
         });
 
         socketRef.current = s;
-        setSocket(s);
+        return s;
+    }, []);
 
+    // Init socket on mount
+    useEffect(() => {
+        initSocket(LOCAL_SOCKET_URL);
         return () => {
-            s.disconnect();
+            if (socketRef.current) socketRef.current.disconnect();
         };
+    }, [initSocket]);
+
+    // Check tunnel status on mount (handles page refresh/HMR while tunnel is running)
+    useEffect(() => {
+        fetch('/api/tunnel/status')
+            .then(r => r.json())
+            .then(data => {
+                if (data.active && data.url) {
+                    setTunnelUrl(data.url);
+                    setShortUrl(data.shortUrl || data.url);
+                    setTunnelActive(true);
+                }
+            })
+            .catch(() => { });
     }, []);
 
     const connectSocket = useCallback(() => {
@@ -74,60 +104,128 @@ export const RoomProvider = ({ children }) => {
         }
     }, []);
 
-    const createRoom = useCallback(({ hostName, examType, testFormat, questions, roomMode }) => {
-        return new Promise((resolve, reject) => {
-            connectSocket();
-            setTimeout(() => {
-                socketRef.current?.emit('createRoom', { hostName, examType, testFormat, questions, roomMode }, (response) => {
-                    if (response.success) {
-                        setRoomState(prev => ({
-                            ...prev,
-                            roomCode: response.code,
-                            isHost: true,
-                            hostName,
-                            playerName: hostName,
-                            roomMode,
-                            examType,
-                            testFormat,
-                            participants: response.room.participants,
-                            started: false,
-                            error: null,
-                        }));
-                        resolve(response);
-                    } else {
-                        reject(new Error(response.error));
-                    }
-                });
-            }, 300);
-        });
-    }, [connectSocket]);
+    // Tunnel management
+    const startTunnel = useCallback(async () => {
+        setTunnelLoading(true);
+        try {
+            const res = await fetch('/api/tunnel/start', { method: 'POST' });
+            const data = await res.json();
+            if (data.success) {
+                setTunnelUrl(data.url);
+                setShortUrl(data.shortUrl || data.url);
+                setTunnelActive(true);
+                return data.url;
+            } else {
+                throw new Error(data.error || 'Failed to start tunnel');
+            }
+        } catch (err) {
+            console.error('Tunnel error:', err);
+            throw err;
+        } finally {
+            setTunnelLoading(false);
+        }
+    }, []);
 
-    const joinRoom = useCallback(({ code, playerName }) => {
+    const stopTunnel = useCallback(async () => {
+        try {
+            await fetch('/api/tunnel/stop', { method: 'POST' });
+        } catch (e) { /* ignore */ }
+        setTunnelUrl(null);
+        setShortUrl(null);
+        setTunnelActive(false);
+    }, []);
+
+    // Connect to a remote server URL (for joining via internet link)
+    const setRemoteServerUrl = useCallback((url) => {
+        if (url === serverUrl) return;
+        setServerUrl(url);
+        initSocket(url);
+    }, [serverUrl, initSocket]);
+
+    // Reset to local server
+    const resetToLocal = useCallback(() => {
+        setServerUrl(LOCAL_SOCKET_URL);
+        initSocket(LOCAL_SOCKET_URL);
+    }, [initSocket]);
+
+    // Helper: ensure socket is connected before emitting
+    const ensureConnected = useCallback(() => {
         return new Promise((resolve, reject) => {
-            connectSocket();
-            setTimeout(() => {
-                socketRef.current?.emit('joinRoom', { code: code.toUpperCase(), playerName }, (response) => {
-                    if (response.success) {
-                        setRoomState(prev => ({
-                            ...prev,
-                            roomCode: code.toUpperCase(),
-                            isHost: false,
-                            playerName,
-                            roomMode: response.room.roomMode,
-                            examType: response.room.examType,
-                            testFormat: response.room.testFormat,
-                            participants: response.room.participants,
-                            started: false,
-                            error: null,
-                        }));
-                        resolve(response);
-                    } else {
-                        reject(new Error(response.error));
-                    }
-                });
-            }, 300);
+            const s = socketRef.current;
+            if (!s) return reject(new Error('Socket not initialized'));
+
+            if (s.connected) return resolve(s);
+
+            s.connect();
+
+            const timeout = setTimeout(() => {
+                s.off('connect', onConnect);
+                reject(new Error('Connection timed out. Is the server running?'));
+            }, 5000);
+
+            const onConnect = () => {
+                clearTimeout(timeout);
+                resolve(s);
+            };
+            s.once('connect', onConnect);
         });
-    }, [connectSocket]);
+    }, []);
+
+    const createRoom = useCallback(async ({ hostName, examType, testFormat, questions, roomMode }) => {
+        const s = await ensureConnected();
+        return new Promise((resolve, reject) => {
+            const timeout = setTimeout(() => reject(new Error('Room creation timed out.')), 8000);
+            s.emit('createRoom', { hostName, examType, testFormat, questions, roomMode }, (response) => {
+                clearTimeout(timeout);
+                if (response.success) {
+                    setRoomState(prev => ({
+                        ...prev,
+                        roomCode: response.code,
+                        isHost: true,
+                        hostName,
+                        playerName: hostName,
+                        roomMode,
+                        examType,
+                        testFormat,
+                        participants: response.room.participants,
+                        started: false,
+                        error: null,
+                    }));
+                    resolve(response);
+                } else {
+                    reject(new Error(response.error));
+                }
+            });
+        });
+    }, [ensureConnected]);
+
+    const joinRoom = useCallback(async ({ code, playerName }) => {
+        const s = await ensureConnected();
+        return new Promise((resolve, reject) => {
+            const timeout = setTimeout(() => reject(new Error('Join timed out.')), 8000);
+            s.emit('joinRoom', { code: code.toUpperCase(), playerName }, (response) => {
+                clearTimeout(timeout);
+                if (response.success) {
+                    setRoomState(prev => ({
+                        ...prev,
+                        roomCode: code.toUpperCase(),
+                        isHost: false,
+                        playerName,
+                        roomMode: response.room.roomMode,
+                        examType: response.room.examType,
+                        testFormat: response.room.testFormat,
+                        participants: response.room.participants,
+                        started: false,
+                        error: null,
+                    }));
+                    resolve(response);
+                } else {
+                    reject(new Error(response.error));
+                }
+            });
+        });
+    }, [ensureConnected]);
+
 
     const startRoom = useCallback(() => {
         return new Promise((resolve, reject) => {
@@ -181,7 +279,8 @@ export const RoomProvider = ({ children }) => {
 
     const leaveRoom = useCallback(() => {
         socketRef.current?.disconnect();
-        socketRef.current?.connect();
+        // Reconnect to current server URL
+        initSocket(serverUrl);
         setRoomState({
             roomCode: null,
             isHost: false,
@@ -197,12 +296,17 @@ export const RoomProvider = ({ children }) => {
             totalParticipants: 0,
             error: null,
         });
-    }, []);
+    }, [initSocket, serverUrl]);
 
     return (
         <RoomContext.Provider value={{
             socket: socketRef.current,
             connected,
+            serverUrl,
+            tunnelUrl,
+            shortUrl,
+            tunnelActive,
+            tunnelLoading,
             ...roomState,
             createRoom,
             joinRoom,
@@ -211,8 +315,13 @@ export const RoomProvider = ({ children }) => {
             syncNavigate,
             submitResults,
             getLeaderboard,
+            startTunnel,
+            stopTunnel,
+            setRemoteServerUrl,
+            resetToLocal,
         }}>
             {children}
         </RoomContext.Provider>
     );
 };
+

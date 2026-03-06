@@ -4,7 +4,8 @@ import { useAuth } from '../context/AuthContext';
 import { useExam } from '../context/ExamContext';
 import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
-import { ChevronLeft, Plus, Upload, Search, Trash2, Edit3, Play, FileJson, CheckCircle, X, BookOpen } from 'lucide-react';
+import { ChevronLeft, Plus, Upload, Search, Trash2, Edit3, Play, FileJson, CheckCircle, X, BookOpen, Download } from 'lucide-react';
+import { parseFile } from '../utils/csvParser';
 import './QuestionBank.css';
 
 const QuestionBank = () => {
@@ -22,7 +23,7 @@ const QuestionBank = () => {
     // Add/Edit modal
     const [showForm, setShowForm] = useState(false);
     const [editId, setEditId] = useState(null);
-    const [form, setForm] = useState({ text: '', options: ['', '', '', ''], correctAnswer: 0, explanation: '', subject: '', subtopic: '', difficulty: 'medium' });
+    const [form, setForm] = useState({ text: '', options: ['', '', '', ''], correctAnswer: 0, explanation: '', subject: '', topic: '', subtopic: '', difficulty: 'medium', questionType: 'MCQ' });
 
     // Bulk import
     const [showImport, setShowImport] = useState(false);
@@ -60,13 +61,13 @@ const QuestionBank = () => {
         }
         setShowForm(false);
         setEditId(null);
-        setForm({ text: '', options: ['', '', '', ''], correctAnswer: 0, explanation: '', subject: '', subtopic: '', difficulty: 'medium' });
+        setForm({ text: '', options: ['', '', '', ''], correctAnswer: 0, explanation: '', subject: '', topic: '', subtopic: '', difficulty: 'medium', questionType: 'MCQ' });
         fetchQuestions();
     };
 
     const handleEdit = (q) => {
         setEditId(q.id);
-        setForm({ text: q.text, options: [...q.options], correctAnswer: q.correctAnswer, explanation: q.explanation || '', subject: q.subject || '', subtopic: q.subtopic || '', difficulty: q.difficulty || 'medium' });
+        setForm({ text: q.text, options: [...q.options], correctAnswer: q.correctAnswer, explanation: q.explanation || '', subject: q.subject || '', topic: q.topic || '', subtopic: q.subtopic || '', difficulty: q.difficulty || 'medium', questionType: q.questionType || 'MCQ' });
         setShowForm(true);
     };
 
@@ -76,7 +77,6 @@ const QuestionBank = () => {
         fetchQuestions();
     };
 
-    // Bulk Import
     const handleBulkImport = async () => {
         setImportMsg('');
         try {
@@ -93,13 +93,38 @@ const QuestionBank = () => {
         }
     };
 
-    const handleFileUpload = (e) => {
+    const handleFileUpload = async (e) => {
         const file = e.target.files[0];
-        if (file) {
+        if (!file) return;
+        const ext = file.name.split('.').pop().toLowerCase();
+
+        if (ext === 'csv' || ext === 'xlsx' || ext === 'xls') {
+            // Parse CSV/Excel directly and import
+            setImportMsg('Parsing file...');
+            const result = await parseFile(file);
+            if (result.errors.length > 0) {
+                setImportMsg(`⚠️ ${result.errors.length} errors: ${result.errors.slice(0, 3).join('; ')}`);
+            }
+            if (result.questions.length > 0) {
+                try {
+                    const res = await authFetch('/api/questions/bulk', { method: 'POST', body: JSON.stringify({ questions: result.questions }) });
+                    const data = await res.json();
+                    if (!res.ok) throw new Error(data.error);
+                    setImportMsg(`✅ Imported ${data.imported} questions from ${file.name}!` + (result.errors.length > 0 ? ` (${result.errors.length} rows skipped)` : ''));
+                    fetchQuestions();
+                } catch (err) {
+                    setImportMsg(`❌ ${err.message}`);
+                }
+            } else if (result.errors.length > 0) {
+                setImportMsg(`❌ No valid questions found. ${result.errors[0]}`);
+            }
+        } else {
+            // JSON file — load into textarea
             const reader = new FileReader();
             reader.onload = (ev) => setJsonInput(ev.target.result);
             reader.readAsText(file);
         }
+        e.target.value = ''; // Reset input
     };
 
     // Generate Test
@@ -140,11 +165,11 @@ const QuestionBank = () => {
 
             {/* Action Bar */}
             <div className="qbank-actions">
-                <Button variant="primary" onClick={() => { setEditId(null); setForm({ text: '', options: ['', '', '', ''], correctAnswer: 0, explanation: '', subject: '', subtopic: '', difficulty: 'medium' }); setShowForm(true); }}>
+                <Button variant="primary" onClick={() => { setEditId(null); setForm({ text: '', options: ['', '', '', ''], correctAnswer: 0, explanation: '', subject: '', topic: '', subtopic: '', difficulty: 'medium', questionType: 'MCQ' }); setShowForm(true); }}>
                     <Plus size={16} /> Add Question
                 </Button>
                 <Button variant="outline" onClick={() => setShowImport(!showImport)}>
-                    <Upload size={16} /> Import JSON
+                    <Upload size={16} /> Import
                 </Button>
                 <Button variant="outline" onClick={() => setShowGenerate(!showGenerate)} disabled={total === 0}>
                     <Play size={16} /> Generate Test
@@ -155,6 +180,7 @@ const QuestionBank = () => {
             {showImport && (
                 <Card className="import-panel glass animate-fade-in">
                     <h3><FileJson size={18} /> Bulk Import</h3>
+                    <p className="import-hint">Supports <strong>.json</strong>, <strong>.csv</strong>, and <strong>.xlsx</strong> files</p>
                     <textarea
                         rows={6}
                         placeholder='Paste JSON array of questions...'
@@ -164,9 +190,12 @@ const QuestionBank = () => {
                     <div className="import-row">
                         <label className="file-upload-btn">
                             <Upload size={14} /> Upload File
-                            <input type="file" accept=".json" onChange={handleFileUpload} hidden />
+                            <input type="file" accept=".json,.csv,.xlsx,.xls" onChange={handleFileUpload} hidden />
                         </label>
-                        <Button variant="primary" onClick={handleBulkImport} disabled={!jsonInput.trim()}>Import</Button>
+                        <a href="/sample_template.csv" download className="file-upload-btn template-btn">
+                            <Download size={14} /> Download Template
+                        </a>
+                        <Button variant="primary" onClick={handleBulkImport} disabled={!jsonInput.trim()}>Import JSON</Button>
                     </div>
                     {importMsg && <div className="import-msg">{importMsg}</div>}
                 </Card>
@@ -220,7 +249,9 @@ const QuestionBank = () => {
                                 <span className="q-num">#{i + 1}</span>
                                 <div className="q-tags">
                                     {q.subject && <span className="q-tag subject">{q.subject}</span>}
+                                    {q.topic && <span className="q-tag topic">{q.topic}</span>}
                                     {q.difficulty && <span className={`q-tag diff-${q.difficulty}`}>{q.difficulty}</span>}
+                                    {q.questionType && q.questionType !== 'MCQ' && <span className="q-tag type">{q.questionType}</span>}
                                 </div>
                                 <div className="q-actions">
                                     <button className="q-action-btn" onClick={() => handleEdit(q)}><Edit3 size={14} /></button>
@@ -281,11 +312,19 @@ const QuestionBank = () => {
                             <input type="text" placeholder="Explanation (optional)" value={form.explanation} onChange={e => setForm({ ...form, explanation: e.target.value })} />
                             <div className="form-row">
                                 <input type="text" placeholder="Subject" value={form.subject} onChange={e => setForm({ ...form, subject: e.target.value })} />
+                                <input type="text" placeholder="Topic" value={form.topic} onChange={e => setForm({ ...form, topic: e.target.value })} />
                                 <input type="text" placeholder="Subtopic" value={form.subtopic} onChange={e => setForm({ ...form, subtopic: e.target.value })} />
+                            </div>
+                            <div className="form-row">
                                 <select value={form.difficulty} onChange={e => setForm({ ...form, difficulty: e.target.value })}>
                                     <option value="easy">Easy</option>
                                     <option value="medium">Medium</option>
                                     <option value="hard">Hard</option>
+                                </select>
+                                <select value={form.questionType} onChange={e => setForm({ ...form, questionType: e.target.value })}>
+                                    <option value="MCQ">MCQ</option>
+                                    <option value="Assertion-Reason">Assertion-Reason</option>
+                                    <option value="Fill in the Blank">Fill in the Blank</option>
                                 </select>
                             </div>
                         </div>

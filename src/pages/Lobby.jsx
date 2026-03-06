@@ -1,75 +1,228 @@
-import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { useState, useEffect } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useRoom } from '../context/RoomContext';
 import { useExam } from '../context/ExamContext';
 import { useAuth } from '../context/AuthContext';
+import { EXAM_TEMPLATES } from '../utils/examTemplates';
+import { parseCSVString } from '../utils/csvParser';
 import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
-import { Users, Plus, LogIn, Copy, Check, Wifi, WifiOff, Crown, User, Zap, BookOpen, ChevronLeft } from 'lucide-react';
+import { Users, Plus, LogIn, Copy, Check, Wifi, WifiOff, Crown, User, Zap, BookOpen, ChevronLeft, Globe, Link2, Loader, Unplug, FileSpreadsheet, Sparkles, ClipboardCheck, LayoutTemplate, ChevronRight, Layers, Target, Library, Share2, Monitor } from 'lucide-react';
 import './Lobby.css';
 
 const Lobby = () => {
     const navigate = useNavigate();
     const room = useRoom();
     const { updateExamState } = useExam();
-    const { user } = useAuth();
+    const { user, authFetch } = useAuth();
 
-    const [tab, setTab] = useState('create'); // 'create' or 'join'
+    const [tab, setTab] = useState('create');
+    const [searchParams] = useSearchParams();
+
+    // Auto-switch to Join tab if ?room= is in the URL
+    useEffect(() => {
+        const roomParam = searchParams.get('room');
+        if (roomParam) {
+            setTab('join');
+            setJoinCode(roomParam.toUpperCase());
+        }
+    }, [searchParams]);
+
+    // ── Create Room Wizard State ─────────────────────────────────────
+    const [createStep, setCreateStep] = useState(1);
+    // Step 1: Exam Type
+    const [selectedExam, setSelectedExam] = useState('');
+    // Step 2: Test Format
+    const [testFormat, setTestFormat] = useState(''); // 'full', 'subject', 'topic'
+    const [selectedSubject, setSelectedSubject] = useState('');
+    const [selectedTopic, setSelectedTopic] = useState('');
+    const [topicQuestionCount, setTopicQuestionCount] = useState(15);
+    // Step 3: AI Prompt
+    const [generatedPrompt, setGeneratedPrompt] = useState('');
+    const [promptCopied, setPromptCopied] = useState(false);
+    // Step 4: Paste & Import
+    const [aiOutput, setAiOutput] = useState('');
+    const [parsedQuestions, setParsedQuestions] = useState([]);
+    const [parseErrors, setParseErrors] = useState([]);
+    // Step 5: Room Config
     const [hostName, setHostName] = useState(user?.name || '');
+    const [roomMode, setRoomMode] = useState('friendly');
+
+    // Saved mocks
+    const [savedMocks, setSavedMocks] = useState([]);
+    const [selectedMockId, setSelectedMockId] = useState('');
+    const [mockLoading, setMockLoading] = useState(false);
+
+    // ── Join Room State ──────────────────────────────────────────────
     const [playerName, setPlayerName] = useState(user?.name || '');
     const [joinCode, setJoinCode] = useState('');
-    const [examType, setExamType] = useState('ssc');
-    const [testFormat, setTestFormat] = useState('full');
-    const [roomMode, setRoomMode] = useState('friendly');
-    const [jsonInput, setJsonInput] = useState('');
+    const [joinLink, setJoinLink] = useState('');
+
+    // ── Shared State ─────────────────────────────────────────────────
     const [error, setError] = useState('');
     const [copied, setCopied] = useState(false);
+    const [copiedInvite, setCopiedInvite] = useState(false);
+    const [copiedShareMsg, setCopiedShareMsg] = useState(false);
+    const [copiedLanLink, setCopiedLanLink] = useState(false);
     const [loading, setLoading] = useState(false);
+    const [lanAddresses, setLanAddresses] = useState([]);
 
+    // Fetch LAN IP addresses
+    useEffect(() => {
+        fetch('/api/network-info')
+            .then(r => r.json())
+            .then(data => setLanAddresses(data.addresses || []))
+            .catch(() => { });
+    }, []);
+
+    // Fetch saved mocks
+    useEffect(() => {
+        if (user) {
+            authFetch('/api/mocks')
+                .then(r => r.json())
+                .then(data => setSavedMocks(data.mocks || []))
+                .catch(() => { });
+        }
+    }, [user, authFetch]);
+
+    const currentTemplate = selectedExam ? EXAM_TEMPLATES[selectedExam] : null;
+    const currentSubject = currentTemplate?.subjects.find(s => s.id === selectedSubject);
+
+    // ── Step 1: Select Exam ──────────────────────────────────────────
+    const handleExamSelect = (examId) => {
+        setSelectedExam(examId);
+        setTestFormat('');
+        setSelectedSubject('');
+        setSelectedTopic('');
+        setParsedQuestions([]);
+        setError('');
+        setCreateStep(2);
+    };
+
+    // ── Step 2: Select Format ────────────────────────────────────────
+    const handleFormatSelect = (fmt) => {
+        setTestFormat(fmt);
+        setSelectedSubject('');
+        setSelectedTopic('');
+        setError('');
+    };
+
+    // ── Step 3: Generate AI Prompt ───────────────────────────────────
+    const generatePrompt = () => {
+        if (!currentTemplate) return;
+
+        const optionsCount = currentTemplate.optionsPerQuestion;
+        const optionLetters = Array.from({ length: optionsCount }, (_, i) => String.fromCharCode(65 + i));
+        const optionHeaders = optionLetters.map(l => `option_${l.toLowerCase()}`).join(',');
+
+        let subjectInfo, topicInfo, questionCount;
+
+        if (testFormat === 'full') {
+            // Full mock — generate for all subjects
+            subjectInfo = currentTemplate.subjects.map(s => `${s.name} (${s.count} questions): Topics — ${s.topics.join(', ')}`).join('\n');
+            questionCount = currentTemplate.subjects.reduce((sum, s) => sum + s.count, 0);
+            topicInfo = '';
+        } else if (testFormat === 'subject') {
+            const subj = currentSubject;
+            if (!subj) return setError('Select a subject.');
+            subjectInfo = `${subj.name} (${subj.count} questions)`;
+            topicInfo = `Topics to cover: ${subj.topics.join(', ')}`;
+            questionCount = subj.count;
+        } else if (testFormat === 'topic') {
+            const subj = currentSubject;
+            if (!subj || !selectedTopic) return setError('Select subject and topic.');
+            subjectInfo = subj.name;
+            topicInfo = `Topic: ${selectedTopic}`;
+            questionCount = topicQuestionCount;
+        }
+
+        const prompt = `Generate exactly ${questionCount} multiple-choice questions for ${currentTemplate.name} exam in CSV format.
+
+REQUIREMENTS:
+- Exam: ${currentTemplate.name}
+${testFormat === 'full' ? `- Full Mock Test covering all subjects:\n${subjectInfo}` : `- Subject: ${subjectInfo}\n${topicInfo ? `- ${topicInfo}` : ''}`}
+- Difficulty: Mix of easy, medium, and hard
+- Each question must have exactly ${optionsCount} options (${optionLetters.join(', ')})
+
+OUTPUT FORMAT:
+Return ONLY a CSV with these exact headers (no extra text, no explanations, no markdown):
+
+question,${optionHeaders},correct_option,explanation,subject,topic,subtopic,difficulty,question_type,exam_type
+
+RULES:
+- correct_option must be a single letter (${optionLetters.join(', ')})
+- question_type should be: MCQ
+- exam_type should be: ${selectedExam}
+- Wrap any field containing commas in double quotes
+- Generate real exam-level questions suitable for ${currentTemplate.name}
+- Each question should have a clear, concise explanation
+- Use proper subject/topic/subtopic tags matching the exam syllabus
+
+START OUTPUT WITH THE CSV HEADER ROW DIRECTLY. NO OTHER TEXT.`;
+
+        setGeneratedPrompt(prompt);
+        setCreateStep(3);
+    };
+
+    // Load from saved mock
+    const loadFromMock = async () => {
+        if (!selectedMockId) return setError('Select a saved mock test.');
+        setError('');
+        setMockLoading(true);
+        try {
+            const res = await authFetch(`/api/mocks/${selectedMockId}/start`);
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error);
+            setParsedQuestions(data.questions);
+            setCreateStep(5);
+        } catch (err) {
+            setError(err.message);
+        }
+        setMockLoading(false);
+    };
+
+    // ── Step 4: Parse AI Output ──────────────────────────────────────
+    const handleParseOutput = () => {
+        if (!aiOutput.trim()) return;
+        setError('');
+        let cleaned = aiOutput.trim();
+        if (cleaned.startsWith('```')) {
+            cleaned = cleaned.replace(/^```(?:csv)?\n?/, '').replace(/\n?```$/, '');
+        }
+
+        const result = parseCSVString(cleaned);
+        setParsedQuestions(result.questions);
+        setParseErrors(result.errors);
+
+        if (result.questions.length > 0) {
+            // Also save to question bank
+            saveToBank(result.questions);
+            setCreateStep(5);
+        } else {
+            setError('No valid questions found. Check the CSV format.');
+        }
+    };
+
+    const saveToBank = async (questions) => {
+        try {
+            await authFetch('/api/questions/bulk', {
+                method: 'POST',
+                body: JSON.stringify({ questions }),
+            });
+        } catch { }
+    };
+
+    // ── Step 5: Create Room ──────────────────────────────────────────
     const handleCreateRoom = async () => {
         setError('');
         if (!hostName.trim()) return setError('Enter your display name.');
-        if (!jsonInput.trim()) return setError('Paste or upload your questions JSON.');
-
-        let parsedQuestions;
-        try {
-            const parsedData = JSON.parse(jsonInput);
-            let questionsArray = Array.isArray(parsedData) ? parsedData : null;
-            if (!questionsArray && typeof parsedData === 'object' && parsedData !== null) {
-                if (Array.isArray(parsedData.questions)) questionsArray = parsedData.questions;
-                else if (Array.isArray(parsedData.data)) questionsArray = parsedData.data;
-                else questionsArray = Object.values(parsedData).find(val => Array.isArray(val));
-            }
-            if (!questionsArray || questionsArray.length === 0) throw new Error('No questions found.');
-
-            const requiredOptions = examType === 'ssc' ? 4 : 5;
-            parsedQuestions = questionsArray.map((q, i) => {
-                if (!q.options || Object.keys(q.options).length !== requiredOptions) {
-                    throw new Error(`Question ${i + 1} must have ${requiredOptions} options.`);
-                }
-                const optionKeys = Object.keys(q.options).sort();
-                const optionsArray = optionKeys.map(key => q.options[key]);
-                if (!q.correct_option || !optionKeys.includes(q.correct_option)) {
-                    throw new Error(`Question ${i + 1} has invalid correct_option.`);
-                }
-                return {
-                    id: q.id || i,
-                    text: q.question,
-                    options: optionsArray,
-                    correctAnswer: optionKeys.indexOf(q.correct_option),
-                    subject: q.subtopic || q.difficulty,
-                    explanation: q.explanation || 'No explanation provided.',
-                };
-            });
-        } catch (err) {
-            return setError(err.message);
-        }
+        if (!parsedQuestions || parsedQuestions.length === 0) return setError('No questions loaded.');
 
         setLoading(true);
         try {
             await room.createRoom({
                 hostName: hostName.trim(),
-                examType,
+                examType: selectedExam,
                 testFormat,
                 questions: parsedQuestions,
                 roomMode,
@@ -80,11 +233,35 @@ const Lobby = () => {
         setLoading(false);
     };
 
+    // ── Join Room ────────────────────────────────────────────────────
     const handleJoinRoom = async () => {
         setError('');
         if (!playerName.trim()) return setError('Enter your display name.');
-        if (!joinCode.trim() || joinCode.trim().length < 4) return setError('Enter a valid room code.');
 
+        if (joinLink.trim()) {
+            try {
+                const url = new URL(joinLink.trim());
+                const params = new URLSearchParams(url.search);
+                const codeFromLink = params.get('room');
+                const serverUrl = url.origin;
+                if (!codeFromLink) return setError('Invalid invite link — no room code found.');
+                room.setRemoteServerUrl(serverUrl);
+                setLoading(true);
+                await new Promise(r => setTimeout(r, 600));
+                try {
+                    await room.joinRoom({ code: codeFromLink, playerName: playerName.trim() });
+                } catch (err) {
+                    setError(err.message);
+                    room.resetToLocal();
+                }
+                setLoading(false);
+                return;
+            } catch {
+                return setError('Invalid invite link format.');
+            }
+        }
+
+        if (!joinCode.trim() || joinCode.trim().length < 4) return setError('Enter a valid room code or invite link.');
         setLoading(true);
         try {
             await room.joinRoom({ code: joinCode.trim(), playerName: playerName.trim() });
@@ -94,14 +271,28 @@ const Lobby = () => {
         setLoading(false);
     };
 
+    // ── Shared Handlers ──────────────────────────────────────────────
     const handleStartTest = async () => {
         setLoading(true);
-        try {
-            await room.startRoom();
-        } catch (err) {
-            setError(err.message);
-        }
+        try { await room.startRoom(); } catch (err) { setError(err.message); }
         setLoading(false);
+    };
+
+    const handleGoOnline = async () => {
+        setError('');
+        try { await room.startTunnel(); } catch (err) { setError('Failed to go online: ' + err.message); }
+    };
+
+    const handleGoOffline = async () => { await room.stopTunnel(); };
+
+    const getInviteLink = () => {
+        if (room.tunnelUrl && room.roomCode) return `${room.tunnelUrl}?room=${room.roomCode}`;
+        return null;
+    };
+
+    const getShortInviteLink = () => {
+        if (room.shortUrl && room.roomCode) return `${room.shortUrl}?room=${room.roomCode}`;
+        return getInviteLink();
     };
 
     const copyCode = () => {
@@ -110,17 +301,44 @@ const Lobby = () => {
         setTimeout(() => setCopied(false), 2000);
     };
 
-    const handleFileUpload = (e) => {
-        const file = e.target.files[0];
-        if (file) {
-            const reader = new FileReader();
-            reader.onload = (ev) => setJsonInput(ev.target.result);
-            reader.readAsText(file);
+    const copyInviteLink = () => {
+        const link = getShortInviteLink() || getInviteLink();
+        if (link) {
+            navigator.clipboard.writeText(link);
+            setCopiedInvite(true);
+            setTimeout(() => setCopiedInvite(false), 2000);
         }
     };
 
+    const getLanUrl = () => {
+        if (lanAddresses.length > 0) {
+            return `http://${lanAddresses[0].address}:5173`;
+        }
+        return `http://${window.location.hostname}:5173`;
+    };
+
+    const copyShareMessage = () => {
+        const tunnelLink = room.tunnelUrl ? `${room.tunnelUrl}/lobby?room=${room.roomCode}` : null;
+        const lanUrl = getLanUrl();
+        let msg = `🎯 Join my Mockify room!\n\n`;
+        if (tunnelLink) {
+            msg += `👉 Click to join: ${tunnelLink}\n\n`;
+        }
+        msg += `🏠 Same WiFi: ${lanUrl}/lobby?room=${room.roomCode}\n`;
+        msg += `🔑 Room Code: ${room.roomCode}`;
+        navigator.clipboard.writeText(msg);
+        setCopiedShareMsg(true);
+        setTimeout(() => setCopiedShareMsg(false), 2500);
+    };
+
+    const copyPrompt = async () => {
+        await navigator.clipboard.writeText(generatedPrompt);
+        setPromptCopied(true);
+        setTimeout(() => setPromptCopied(false), 2000);
+    };
+
     // Listen for test start
-    React.useEffect(() => {
+    useEffect(() => {
         if (!room.socket) return;
         const handler = ({ questions, examType: et, testFormat: tf, roomMode: rm }) => {
             updateExamState({
@@ -142,8 +360,10 @@ const Lobby = () => {
         return () => room.socket.off('testStarted', handler);
     }, [room.socket, room.roomCode, updateExamState, navigate]);
 
-    // If in a room, show the waiting lobby
+    // ── WAITING LOBBY VIEW ───────────────────────────────────────────
     if (room.roomCode && !room.started) {
+        const inviteLink = getInviteLink();
+        const lanUrl = getLanUrl();
         return (
             <div className="lobby-container animate-fade-in">
                 <div className="lobby-header">
@@ -158,13 +378,83 @@ const Lobby = () => {
                             <span>{room.roomCode}</span>
                             {copied ? <Check size={20} className="text-success" /> : <Copy size={20} />}
                         </div>
-                        <span className="room-code-hint">Share this code with your peers</span>
+                    </div>
+
+                    {/* ── Share & Invite Section ── */}
+                    <div className="share-section">
+                        <h3 className="share-section-title"><Share2 size={16} /> Share & Invite Friends</h3>
+
+                        {/* Quick Share — copies formatted message */}
+                        <button className="share-message-btn" onClick={copyShareMessage}>
+                            {copiedShareMsg ? (
+                                <><Check size={18} /> Invite Copied! Paste in WhatsApp / Telegram</>
+                            ) : (
+                                <><Share2 size={18} /> 📋 Copy Invite Message</>
+                            )}
+                        </button>
+                        <p className="share-hint">Copies room code + link — paste in WhatsApp, Telegram, etc.</p>
+
+                        {/* LAN Link — always visible */}
+                        <div className="share-method">
+                            <div className="share-method-header">
+                                <Monitor size={15} />
+                                <span>Same WiFi / LAN</span>
+                            </div>
+                            <div className="invite-link-row">
+                                <input className="invite-link-input" value={`${lanUrl}/lobby?room=${room.roomCode}`} readOnly onClick={e => e.target.select()} />
+                                <button className="copy-invite-btn" onClick={() => { navigator.clipboard.writeText(`${lanUrl}/lobby?room=${room.roomCode}`); setCopiedLanLink(true); setTimeout(() => setCopiedLanLink(false), 2000); }}>
+                                    {copiedLanLink ? <><Check size={14} /> Copied!</> : <><Copy size={14} /> Copy</>}
+                                </button>
+                            </div>
+                            <p className="share-method-hint">Share this link with friends on the same WiFi network</p>
+                        </div>
+
+                        {/* Internet Link */}
+                        {room.isHost && (
+                            <div className="share-method">
+                                <div className="share-method-header">
+                                    <Globe size={15} />
+                                    <span>Internet (Different Networks)</span>
+                                </div>
+                                {!room.tunnelActive ? (
+                                    <button className="go-online-btn" onClick={handleGoOnline} disabled={room.tunnelLoading}>
+                                        {room.tunnelLoading ? (
+                                            <><Loader size={16} className="spin" /> Going online...</>
+                                        ) : (
+                                            <>🌐 Go Online — Get a shareable link</>
+                                        )}
+                                    </button>
+                                ) : (
+                                    <div className="invite-link-area">
+                                        <div className="online-badge">
+                                            <Globe size={14} /> Online — friends can join from anywhere!
+                                        </div>
+                                        {inviteLink ? (
+                                            <div className="invite-link-row">
+                                                <input className="invite-link-input" value={getShortInviteLink() || inviteLink} readOnly onClick={e => e.target.select()} />
+                                                <button className="copy-invite-btn" onClick={copyInviteLink}>
+                                                    {copiedInvite ? <><Check size={14} /> Copied!</> : <><Link2 size={14} /> Copy</>}
+                                                </button>
+                                            </div>
+                                        ) : (
+                                            <div className="invite-link-row">
+                                                <input className="invite-link-input" value="Loading link..." readOnly style={{ opacity: 0.5 }} />
+                                            </div>
+                                        )}
+                                        <p className="share-method-hint">Share this link with friends anywhere on the internet</p>
+                                        <button className="go-offline-btn" onClick={handleGoOffline}>
+                                            <Unplug size={14} /> Go Offline
+                                        </button>
+                                    </div>
+                                )}
+                            </div>
+                        )}
                     </div>
 
                     <div className="room-info-badges">
-                        <span className="info-badge">{room.examType?.toUpperCase()}</span>
-                        <span className="info-badge">{room.roomMode === 'friendly' ? '🎉 Friendly Test' : '📝 Real Exam'}</span>
-                        <span className="info-badge">{room.testFormat}</span>
+                        <span className="info-badge">{currentTemplate?.name || selectedExam?.toUpperCase()}</span>
+                        <span className="info-badge">{roomMode === 'friendly' ? '🎉 Friendly' : '📝 Real Exam'}</span>
+                        {room.tunnelActive && <span className="info-badge online-badge-sm">🌐 Online</span>}
                     </div>
 
                     <div className="participants-section">
@@ -183,7 +473,7 @@ const Lobby = () => {
                     {error && <div className="error-message"><span>{error}</span></div>}
 
                     <div className="lobby-actions">
-                        <Button variant="ghost" onClick={() => { room.leaveRoom(); }}>
+                        <Button variant="ghost" onClick={() => room.leaveRoom()}>
                             <ChevronLeft size={16} /> Leave Room
                         </Button>
                         {room.isHost && (
@@ -197,11 +487,15 @@ const Lobby = () => {
         );
     }
 
+    // ── Filter mocks ─────────────────────────────────────────────────
+    const filteredMocks = savedMocks.filter(m => m.exam_template_id === selectedExam);
+
+    // ── MAIN LOBBY VIEW ──────────────────────────────────────────────
     return (
         <div className="lobby-container animate-fade-in">
             <div className="lobby-header">
                 <h1>🏠 Multiplayer Room</h1>
-                <p>Compete with friends in real-time</p>
+                <p>Compete with friends — LAN or Internet</p>
                 <div className={`connection-status ${room.connected ? 'online' : 'offline'}`}>
                     {room.connected ? <><Wifi size={14} /> Connected</> : <><WifiOff size={14} /> Connecting...</>}
                 </div>
@@ -217,63 +511,278 @@ const Lobby = () => {
                     </button>
                 </div>
 
+                {/* ═══════════════ CREATE ROOM TAB ═══════════════ */}
                 {tab === 'create' && (
                     <div className="tab-content animate-fade-in">
-                        <div className="form-group">
-                            <label>Your Display Name</label>
-                            <input className="lobby-input" value={hostName} onChange={e => setHostName(e.target.value)} placeholder="e.g. Praveen" />
+
+                        {/* Step indicator */}
+                        <div className="wizard-steps">
+                            <div className={`wizard-step ${createStep >= 1 ? 'active' : ''}`} onClick={() => createStep > 1 && setCreateStep(1)}>1. Exam</div>
+                            <div className="wizard-step-line" />
+                            <div className={`wizard-step ${createStep >= 2 ? 'active' : ''}`} onClick={() => createStep > 2 && setCreateStep(2)}>2. Format</div>
+                            <div className="wizard-step-line" />
+                            <div className={`wizard-step ${createStep >= 3 ? 'active' : ''}`} onClick={() => createStep > 3 && setCreateStep(3)}>3. AI Prompt</div>
+                            <div className="wizard-step-line" />
+                            <div className={`wizard-step ${createStep >= 4 ? 'active' : ''}`} onClick={() => createStep > 4 && setCreateStep(4)}>4. Import</div>
+                            <div className="wizard-step-line" />
+                            <div className={`wizard-step ${createStep >= 5 ? 'active' : ''}`}>5. Create</div>
                         </div>
 
-                        <div className="form-row">
-                            <div className="form-group">
-                                <label>Exam Type</label>
-                                <div className="mini-options">
-                                    <button className={examType === 'ssc' ? 'selected' : ''} onClick={() => setExamType('ssc')}>
-                                        <BookOpen size={16} /> SSC
-                                    </button>
-                                    <button className={examType === 'ibps' ? 'selected' : ''} onClick={() => setExamType('ibps')}>
-                                        <BookOpen size={16} /> IBPS
-                                    </button>
+                        {/* ── Step 1: Select Exam ── */}
+                        {createStep === 1 && (
+                            <div className="wizard-content animate-fade-in">
+                                <h3 className="wizard-title">Select Exam Type</h3>
+                                <div className="exam-grid">
+                                    {Object.values(EXAM_TEMPLATES).map(t => (
+                                        <button key={t.id} className={`exam-card ${selectedExam === t.id ? 'selected' : ''}`} onClick={() => handleExamSelect(t.id)}>
+                                            <BookOpen size={24} />
+                                            <span className="exam-card-name">{t.name}</span>
+                                            <span className="exam-card-info">{t.optionsPerQuestion} Options • {t.subjects.length} Subjects</span>
+                                        </button>
+                                    ))}
                                 </div>
                             </div>
-                            <div className="form-group">
-                                <label>Room Mode</label>
-                                <div className="mini-options">
-                                    <button className={roomMode === 'friendly' ? 'selected' : ''} onClick={() => setRoomMode('friendly')} title="Wait for all answers, reveal correct answer together">
-                                        🎉 Friendly
+                        )}
+
+                        {/* ── Step 2: Select Format ── */}
+                        {createStep === 2 && currentTemplate && (
+                            <div className="wizard-content animate-fade-in">
+                                <h3 className="wizard-title">{currentTemplate.name} — Choose Format</h3>
+
+                                <div className="format-grid">
+                                    <button
+                                        className={`format-card ${testFormat === 'full' ? 'selected' : ''}`}
+                                        onClick={() => handleFormatSelect('full')}
+                                    >
+                                        <Layers size={22} />
+                                        <span className="format-card-name">Full Mock</span>
+                                        <span className="format-card-info">{currentTemplate.subjects.reduce((s, sub) => s + sub.count, 0)} Questions, All Subjects</span>
                                     </button>
-                                    <button className={roomMode === 'exam' ? 'selected' : ''} onClick={() => setRoomMode('exam')} title="Real exam — answers revealed only after submission">
-                                        📝 Real Exam
+                                    <button
+                                        className={`format-card ${testFormat === 'subject' ? 'selected' : ''}`}
+                                        onClick={() => handleFormatSelect('subject')}
+                                    >
+                                        <Library size={22} />
+                                        <span className="format-card-name">Subject Wise</span>
+                                        <span className="format-card-info">Pick one subject</span>
+                                    </button>
+                                    <button
+                                        className={`format-card ${testFormat === 'topic' ? 'selected' : ''}`}
+                                        onClick={() => handleFormatSelect('topic')}
+                                    >
+                                        <Target size={22} />
+                                        <span className="format-card-name">Topic Wise</span>
+                                        <span className="format-card-info">Pick a specific topic</span>
                                     </button>
                                 </div>
+
+                                {/* Subject picker (for subject/topic format) */}
+                                {(testFormat === 'subject' || testFormat === 'topic') && (
+                                    <div className="subject-picker animate-fade-in">
+                                        <label className="picker-label">Select Subject</label>
+                                        <div className="subject-chips">
+                                            {currentTemplate.subjects.map(s => (
+                                                <button
+                                                    key={s.id}
+                                                    className={`subject-chip ${selectedSubject === s.id ? 'selected' : ''}`}
+                                                    onClick={() => { setSelectedSubject(s.id); setSelectedTopic(''); }}
+                                                >
+                                                    {s.name} ({s.count}Q)
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Topic picker (for topic format) */}
+                                {testFormat === 'topic' && currentSubject && (
+                                    <div className="topic-picker animate-fade-in">
+                                        <label className="picker-label">Select Topic</label>
+                                        <div className="topic-chips">
+                                            {currentSubject.topics.map(t => (
+                                                <button
+                                                    key={t}
+                                                    className={`topic-chip ${selectedTopic === t ? 'selected' : ''}`}
+                                                    onClick={() => setSelectedTopic(t)}
+                                                >
+                                                    {t}
+                                                </button>
+                                            ))}
+                                        </div>
+                                        <div className="form-group" style={{ marginTop: '0.75rem' }}>
+                                            <label>Number of Questions</label>
+                                            <input
+                                                type="number"
+                                                className="lobby-input"
+                                                value={topicQuestionCount}
+                                                onChange={e => setTopicQuestionCount(Math.max(1, parseInt(e.target.value) || 1))}
+                                                min={1}
+                                                max={50}
+                                                style={{ maxWidth: '120px' }}
+                                            />
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Also show "Load from Saved Mock" option */}
+                                {filteredMocks.length > 0 && (
+                                    <div className="saved-mock-section">
+                                        <div className="join-divider"><span>OR LOAD SAVED MOCK</span></div>
+                                        <div className="form-row">
+                                            <div className="form-group" style={{ flex: 2 }}>
+                                                <select className="lobby-select" value={selectedMockId} onChange={e => setSelectedMockId(e.target.value)}>
+                                                    <option value="">-- Select Saved Mock --</option>
+                                                    {filteredMocks.map(m => (
+                                                        <option key={m.id} value={m.id}>{m.name} ({m.question_count} Qs)</option>
+                                                    ))}
+                                                </select>
+                                            </div>
+                                            <Button variant="outline" onClick={loadFromMock} disabled={mockLoading || !selectedMockId}>
+                                                {mockLoading ? <Loader size={14} className="spin" /> : <LayoutTemplate size={14} />} Load
+                                            </Button>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {error && <div className="error-message"><span>{error}</span></div>}
+
+                                <div className="step-nav">
+                                    <Button variant="ghost" onClick={() => setCreateStep(1)}>
+                                        <ChevronLeft size={16} /> Back
+                                    </Button>
+                                    {testFormat && (testFormat === 'full' || selectedSubject) && (testFormat !== 'topic' || selectedTopic) && (
+                                        <Button variant="primary" onClick={generatePrompt}>
+                                            <Sparkles size={16} /> Generate AI Prompt <ChevronRight size={16} />
+                                        </Button>
+                                    )}
+                                </div>
                             </div>
-                        </div>
+                        )}
 
-                        <div className="form-group">
-                            <label>Questions Data (JSON)</label>
-                            <div className="upload-row">
-                                <input type="file" id="room-json-upload" accept=".json" style={{ display: 'none' }} onChange={handleFileUpload} />
-                                <label htmlFor="room-json-upload" className="upload-btn-sm">📁 Upload .json</label>
+                        {/* ── Step 3: AI Prompt ── */}
+                        {createStep === 3 && (
+                            <div className="wizard-content animate-fade-in">
+                                <h3 className="wizard-title">📋 Copy & Paste into AI</h3>
+                                <p className="wizard-subtitle">
+                                    Use <a href="https://chat.deepseek.com" target="_blank" rel="noreferrer">DeepSeek</a>,{' '}
+                                    <a href="https://chat.openai.com" target="_blank" rel="noreferrer">ChatGPT</a>,{' '}
+                                    <a href="https://gemini.google.com" target="_blank" rel="noreferrer">Gemini</a>, or any free AI
+                                </p>
+
+                                <div className="prompt-box">
+                                    <pre>{generatedPrompt}</pre>
+                                </div>
+
+                                <div className="prompt-actions-row">
+                                    <button className="copy-prompt-btn" onClick={copyPrompt}>
+                                        {promptCopied ? <><ClipboardCheck size={16} /> Copied!</> : <><Copy size={16} /> Copy Prompt</>}
+                                    </button>
+                                    <Button variant="primary" onClick={() => setCreateStep(4)}>
+                                        Next: Paste AI Output <ChevronRight size={16} />
+                                    </Button>
+                                </div>
+
+                                <div className="step-nav">
+                                    <Button variant="ghost" onClick={() => setCreateStep(2)}>
+                                        <ChevronLeft size={16} /> Back
+                                    </Button>
+                                </div>
                             </div>
-                            <textarea className="json-textarea" value={jsonInput} onChange={e => setJsonInput(e.target.value)} placeholder='[{"question": "...", "options": {...}, "correct_option": "A"}]' rows={4}></textarea>
-                        </div>
+                        )}
 
-                        {error && <div className="error-message"><span>{error}</span></div>}
+                        {/* ── Step 4: Paste & Import ── */}
+                        {createStep === 4 && (
+                            <div className="wizard-content animate-fade-in">
+                                <h3 className="wizard-title">📥 Paste AI's CSV Output</h3>
+                                <p className="wizard-subtitle">Copy the entire CSV output from the AI and paste below</p>
 
-                        <Button variant="primary" className="full-width" onClick={handleCreateRoom} disabled={loading}>
-                            {loading ? 'Creating...' : '🚀 Create Room'}
-                        </Button>
+                                <textarea
+                                    className="json-textarea"
+                                    rows={8}
+                                    value={aiOutput}
+                                    onChange={e => setAiOutput(e.target.value)}
+                                    placeholder="Paste CSV output here..."
+                                />
+
+                                {parseErrors.length > 0 && (
+                                    <div className="error-message">
+                                        <span>⚠️ {parseErrors.length} issue(s): {parseErrors.slice(0, 2).join('; ')}</span>
+                                    </div>
+                                )}
+
+                                {error && <div className="error-message"><span>{error}</span></div>}
+
+                                <Button variant="primary" className="full-width" onClick={handleParseOutput} disabled={!aiOutput.trim()}>
+                                    <FileSpreadsheet size={16} /> Parse & Import to Question Bank
+                                </Button>
+
+                                <div className="step-nav">
+                                    <Button variant="ghost" onClick={() => setCreateStep(3)}>
+                                        <ChevronLeft size={16} /> Back
+                                    </Button>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* ── Step 5: Room Config & Create ── */}
+                        {createStep === 5 && (
+                            <div className="wizard-content animate-fade-in">
+                                <h3 className="wizard-title">🚀 Create Your Room</h3>
+
+                                <div className="questions-loaded-badge">
+                                    ✅ {parsedQuestions.length} questions loaded & saved to bank
+                                </div>
+
+                                <div className="form-group">
+                                    <label>Your Display Name</label>
+                                    <input className="lobby-input" value={hostName} onChange={e => setHostName(e.target.value)} placeholder="e.g. Praveen" />
+                                </div>
+
+                                <div className="form-group">
+                                    <label>Room Mode</label>
+                                    <div className="mini-options">
+                                        <button className={roomMode === 'friendly' ? 'selected' : ''} onClick={() => setRoomMode('friendly')}>
+                                            🎉 Friendly
+                                        </button>
+                                        <button className={roomMode === 'exam' ? 'selected' : ''} onClick={() => setRoomMode('exam')}>
+                                            📝 Real Exam
+                                        </button>
+                                    </div>
+                                </div>
+
+                                {error && <div className="error-message"><span>{error}</span></div>}
+
+                                <Button variant="primary" className="full-width" onClick={handleCreateRoom} disabled={loading}>
+                                    {loading ? 'Creating...' : '🚀 Create Room'}
+                                </Button>
+
+                                <div className="step-nav">
+                                    <Button variant="ghost" onClick={() => setCreateStep(4)}>
+                                        <ChevronLeft size={16} /> Back
+                                    </Button>
+                                </div>
+                            </div>
+                        )}
                     </div>
                 )}
 
+                {/* ═══════════════ JOIN ROOM TAB ═══════════════ */}
                 {tab === 'join' && (
                     <div className="tab-content animate-fade-in">
                         <div className="form-group">
                             <label>Your Display Name</label>
                             <input className="lobby-input" value={playerName} onChange={e => setPlayerName(e.target.value)} placeholder="e.g. Rahul" />
                         </div>
+
                         <div className="form-group">
-                            <label>Room Code</label>
+                            <label>🌐 Invite Link <span className="label-hint">(paste the full link from your friend)</span></label>
+                            <input className="lobby-input invite-link-join-input" value={joinLink} onChange={e => setJoinLink(e.target.value)} placeholder="e.g. https://cool-fox-42.loca.lt?room=A1B2C3" />
+                        </div>
+
+                        <div className="join-divider"><span>OR</span></div>
+
+                        <div className="form-group">
+                            <label>Room Code <span className="label-hint">(LAN / same network)</span></label>
                             <input className="lobby-input room-code-input" value={joinCode} onChange={e => setJoinCode(e.target.value.toUpperCase())} placeholder="e.g. A1B2C3" maxLength={6} />
                         </div>
 

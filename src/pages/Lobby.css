@@ -373,4 +373,673 @@
     .lobby-card {
         padding: 1.5rem;
     }
+
+    .exam-grid {
+        grid-template-columns: 1fr !important;
+    }
+
+    .source-tabs {
+        flex-direction: column !important;
+    }
+}
+
+/* ── Wizard Steps ─────────────────────────────────────────────────── */
+.wizard-steps {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0;
+    margin-bottom: 1.75rem;
+}
+
+.wizard-step {
+    padding: 0.5rem 1rem;
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    opacity: 0.4;
+    cursor: default;
+    transition: all 0.3s ease;
+}
+
+.wizard-step.active {
+    opacity: 1;
+    color: #a5b4fc;
+}
+
+.wizard-step-line {
+    width: 2rem;
+    height: 2px;
+    background: var(--card-border);
+    flex-shrink: 0;
+}
+
+.wizard-content {
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
+}
+
+.wizard-title {
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    text-align: center;
+}
+
+/* ── Exam Grid ────────────────────────────────────────────────────── */
+.exam-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 0.75rem;
+}
+
+.exam-card {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 1.25rem 0.75rem;
+    background: rgba(15, 23, 42, 0.5);
+    border: 1px solid var(--card-border);
+    border-radius: 12px;
+    color: var(--text-primary);
+    font-family: inherit;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.exam-card:hover {
+    border-color: rgba(99, 102, 241, 0.4);
+    background: rgba(99, 102, 241, 0.08);
+    transform: translateY(-2px);
+}
+
+.exam-card.selected {
+    border-color: var(--primary);
+    background: rgba(99, 102, 241, 0.15);
+}
+
+.exam-card-name {
+    font-size: 0.9rem;
+    font-weight: 600;
+}
+
+.exam-card-info {
+    font-size: 0.7rem;
+    color: var(--text-secondary);
+}
+
+/* ── Source Tabs ───────────────────────────────────────────────────── */
+.source-tabs {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.source-tab {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4rem;
+    padding: 0.7rem 0.5rem;
+    background: rgba(15, 23, 42, 0.5);
+    border: 1px solid var(--card-border);
+    border-radius: 10px;
+    color: var(--text-secondary);
+    font-family: inherit;
+    font-size: 0.8rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.source-tab:hover {
+    border-color: rgba(255, 255, 255, 0.15);
+}
+
+.source-tab.active {
+    background: rgba(99, 102, 241, 0.12);
+    border-color: var(--primary);
+    color: #a5b4fc;
+    font-weight: 600;
+}
+
+.source-content {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    padding: 1rem;
+    background: rgba(15, 23, 42, 0.3);
+    border: 1px solid var(--card-border);
+    border-radius: 10px;
+}
+
+/* ── Select Dropdown ──────────────────────────────────────────────── */
+.lobby-select {
+    width: 100%;
+    padding: 0.75rem 1rem;
+    background: rgba(15, 23, 42, 0.6);
+    border: 1px solid var(--card-border);
+    border-radius: 8px;
+    color: var(--text-primary);
+    font-family: inherit;
+    font-size: 0.9rem;
+    outline: none;
+    cursor: pointer;
+    transition: border-color 0.2s ease;
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 0.75rem center;
+    padding-right: 2.5rem;
+}
+
+.lobby-select:focus {
+    border-color: var(--primary);
+}
+
+.lobby-select option {
+    background: #1e293b;
+    color: var(--text-primary);
+}
+
+/* ── Questions Loaded Badge ───────────────────────────────────────── */
+.questions-loaded-badge {
+    text-align: center;
+    padding: 0.65rem 1rem;
+    background: rgba(16, 185, 129, 0.1);
+    border: 1px solid rgba(16, 185, 129, 0.25);
+    border-radius: 10px;
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: #34d399;
+}
+
+/* ── Empty State ──────────────────────────────────────────────────── */
+.empty-state {
+    text-align: center;
+    padding: 1.5rem;
+    color: var(--text-secondary);
+}
+
+.empty-state p {
+    margin-bottom: 0.5rem;
+}
+
+.empty-hint {
+    font-size: 0.8rem;
+    opacity: 0.7;
+}
+
+/* ── Step Actions / Nav ───────────────────────────────────────────── */
+.step-actions,
+.step-nav {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 0.5rem;
+    gap: 0.75rem;
+}
+
+/* ── Format Grid ──────────────────────────────────────────────────── */
+.format-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 0.75rem;
+}
+
+.format-card {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 1.1rem 0.5rem;
+    background: rgba(15, 23, 42, 0.5);
+    border: 1px solid var(--card-border);
+    border-radius: 12px;
+    color: var(--text-primary);
+    font-family: inherit;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.format-card:hover {
+    border-color: rgba(99, 102, 241, 0.4);
+    background: rgba(99, 102, 241, 0.08);
+    transform: translateY(-2px);
+}
+
+.format-card.selected {
+    border-color: var(--primary);
+    background: rgba(99, 102, 241, 0.15);
+}
+
+.format-card-name {
+    font-size: 0.85rem;
+    font-weight: 600;
+}
+
+.format-card-info {
+    font-size: 0.65rem;
+    color: var(--text-secondary);
+}
+
+/* ── Subject / Topic Chips ────────────────────────────────────────── */
+.subject-picker,
+.topic-picker {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+}
+
+.picker-label {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+}
+
+.subject-chips,
+.topic-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+}
+
+.subject-chip,
+.topic-chip {
+    padding: 0.45rem 0.85rem;
+    background: rgba(15, 23, 42, 0.5);
+    border: 1px solid var(--card-border);
+    border-radius: 20px;
+    color: var(--text-primary);
+    font-family: inherit;
+    font-size: 0.75rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.subject-chip:hover,
+.topic-chip:hover {
+    border-color: rgba(99, 102, 241, 0.4);
+    background: rgba(99, 102, 241, 0.08);
+}
+
+.subject-chip.selected,
+.topic-chip.selected {
+    background: rgba(99, 102, 241, 0.2);
+    border-color: var(--primary);
+    color: #a5b4fc;
+    font-weight: 600;
+}
+
+/* ── Prompt Box ───────────────────────────────────────────────────── */
+.prompt-box {
+    background: rgba(15, 23, 42, 0.6);
+    border: 1px solid var(--card-border);
+    border-radius: 10px;
+    padding: 1rem;
+    max-height: 280px;
+    overflow-y: auto;
+}
+
+.prompt-box pre {
+    margin: 0;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    line-height: 1.5;
+}
+
+.prompt-actions-row {
+    display: flex;
+    gap: 0.75rem;
+    align-items: center;
+}
+
+.copy-prompt-btn {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.65rem 1.25rem;
+    background: rgba(16, 185, 129, 0.12);
+    border: 1px solid rgba(16, 185, 129, 0.3);
+    border-radius: 8px;
+    color: #34d399;
+    font-family: inherit;
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.copy-prompt-btn:hover {
+    background: rgba(16, 185, 129, 0.2);
+}
+
+/* ── Wizard Subtitle ──────────────────────────────────────────────── */
+.wizard-subtitle {
+    text-align: center;
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    margin-top: -0.5rem;
+}
+
+.wizard-subtitle a {
+    color: #a5b4fc;
+    text-decoration: none;
+}
+
+.wizard-subtitle a:hover {
+    text-decoration: underline;
+}
+
+/* ── Saved Mock Section ───────────────────────────────────────────── */
+.saved-mock-section {
+    margin-top: 0.5rem;
+}
+
+.saved-mock-section .form-row {
+    display: flex;
+    gap: 0.5rem;
+    align-items: flex-end;
+}
+
+@media (max-width: 640px) {
+    .format-grid {
+        grid-template-columns: 1fr !important;
+    }
+}
+
+/* ── Share & Invite Section ─────────────────────────────────────────── */
+.share-section {
+    margin-bottom: 1.5rem;
+    padding: 1.25rem;
+    border: 1px solid var(--card-border);
+    border-radius: 14px;
+    background: rgba(15, 23, 42, 0.35);
+    display: flex;
+    flex-direction: column;
+    gap: 0.85rem;
+}
+
+.share-section-title {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin: 0;
+}
+
+.share-message-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    width: 100%;
+    padding: 0.85rem 1.25rem;
+    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+    border: none;
+    border-radius: 10px;
+    color: #fff;
+    font-family: inherit;
+    font-size: 0.95rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+.share-message-btn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 6px 24px rgba(16, 185, 129, 0.3);
+}
+
+.share-hint {
+    margin: -0.3rem 0 0;
+    text-align: center;
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    opacity: 0.7;
+}
+
+.share-method {
+    padding: 0.85rem 1rem;
+    background: rgba(15, 23, 42, 0.5);
+    border: 1px solid var(--card-border);
+    border-radius: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.share-method-header {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: #a5b4fc;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.share-method-desc {
+    margin: 0;
+    font-size: 0.82rem;
+    color: var(--text-secondary);
+    line-height: 1.5;
+}
+
+.share-method-desc strong {
+    color: var(--text-primary);
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+    background: rgba(99, 102, 241, 0.1);
+    padding: 0.1rem 0.4rem;
+    border-radius: 4px;
+}
+
+.share-method-hint {
+    margin: 0.15rem 0 0;
+    font-size: 0.72rem;
+    color: var(--text-secondary);
+    opacity: 0.65;
+}
+
+/* ── Online / Tunnel Section ────────────────────────────────────────── */
+.online-section {
+    margin-bottom: 1.5rem;
+    padding: 1rem;
+    border: 1px solid var(--card-border);
+    border-radius: 12px;
+    background: rgba(15, 23, 42, 0.3);
+}
+
+.go-online-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    width: 100%;
+    padding: 0.85rem 1.25rem;
+    background: linear-gradient(135deg, #3b82f6 0%, #6366f1 50%, #8b5cf6 100%);
+    border: none;
+    border-radius: 10px;
+    color: #fff;
+    font-family: inherit;
+    font-size: 0.95rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    background-size: 200% 200%;
+    animation: gradientShift 3s ease infinite;
+}
+
+.go-online-btn:hover:not(:disabled) {
+    transform: translateY(-1px);
+    box-shadow: 0 6px 24px rgba(99, 102, 241, 0.35);
+}
+
+.go-online-btn:disabled {
+    opacity: 0.7;
+    cursor: not-allowed;
+}
+
+@keyframes gradientShift {
+
+    0%,
+    100% {
+        background-position: 0% 50%;
+    }
+
+    50% {
+        background-position: 100% 50%;
+    }
+}
+
+.invite-link-area {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.online-badge {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 0.5rem 1rem;
+    background: rgba(16, 185, 129, 0.12);
+    border: 1px solid rgba(16, 185, 129, 0.3);
+    border-radius: 8px;
+    color: #34d399;
+    font-size: 0.85rem;
+    font-weight: 600;
+}
+
+.online-badge-sm {
+    background: rgba(16, 185, 129, 0.1) !important;
+    border-color: rgba(16, 185, 129, 0.3) !important;
+    color: #34d399 !important;
+}
+
+.invite-link-row {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.invite-link-input {
+    flex: 1;
+    padding: 0.6rem 0.75rem;
+    background: rgba(15, 23, 42, 0.6);
+    border: 1px solid var(--card-border);
+    border-radius: 8px;
+    color: #a5b4fc;
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    outline: none;
+    cursor: text;
+}
+
+.invite-link-input:focus {
+    border-color: var(--primary);
+}
+
+.copy-invite-btn {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.6rem 1rem;
+    background: rgba(99, 102, 241, 0.15);
+    border: 1px solid var(--primary);
+    border-radius: 8px;
+    color: #a5b4fc;
+    font-family: inherit;
+    font-size: 0.8rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    white-space: nowrap;
+}
+
+.copy-invite-btn:hover {
+    background: rgba(99, 102, 241, 0.25);
+}
+
+.go-offline-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4rem;
+    width: 100%;
+    padding: 0.5rem;
+    background: transparent;
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    border-radius: 8px;
+    color: #f87171;
+    font-family: inherit;
+    font-size: 0.8rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.go-offline-btn:hover {
+    background: rgba(239, 68, 68, 0.1);
+}
+
+/* ── Join Divider ─────────────────────────────────────────────────── */
+.join-divider {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    margin: 0.25rem 0;
+}
+
+.join-divider::before,
+.join-divider::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--card-border);
+}
+
+.join-divider span {
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+}
+
+.label-hint {
+    font-weight: 400;
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    opacity: 0.7;
+}
+
+.invite-link-join-input {
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+}
+
+/* ── Spinner ──────────────────────────────────────────────────────── */
+.spin {
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    from {
+        transform: rotate(0deg);
+    }
+
+    to {
+        transform: rotate(360deg);
+    }
 }

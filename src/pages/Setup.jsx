@@ -5,7 +5,7 @@ import { useAuth } from '../context/AuthContext';
 import { EXAM_TEMPLATES } from '../utils/examTemplates';
 import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
-import { BookOpen, Upload, FileJson, AlertCircle, Users, Folder, BarChart3, LogOut, Settings as SettingsIcon, Trophy, Library, LayoutTemplate } from 'lucide-react';
+import { BookOpen, Upload, FileJson, AlertCircle, Users, Folder, BarChart3, LogOut, Settings as SettingsIcon, Trophy, Library, LayoutTemplate, Sparkles } from 'lucide-react';
 import './Setup.css';
 
 const Setup = () => {
@@ -174,7 +174,7 @@ const Setup = () => {
             <div className="user-bar">
                 <span className="user-greeting">👋 {user?.name || 'Guest'}</span>
                 <div className="user-actions">
-                    <button className="icon-btn" onClick={() => navigate('/settings')} title="Settings"><SettingsIcon size={16} /></button>
+                    <button className="settings-btn" onClick={() => navigate('/settings')} title="Settings"><SettingsIcon size={14} /> Settings</button>
                     <button className="logout-btn" onClick={logout}><LogOut size={14} /> Logout</button>
                 </div>
             </div>
@@ -342,6 +342,10 @@ const Setup = () => {
                 <button className="secondary-action-btn" onClick={() => navigate('/saved')}>
                     <Folder size={20} />
                     <span>Saved Exams</span>
+                </button>
+                <button className="secondary-action-btn ai-tint" onClick={() => navigate('/ai-generator')}>
+                    <Sparkles size={20} />
+                    <span>AI Generate</span>
                 </button>
             </div>
         </div>
