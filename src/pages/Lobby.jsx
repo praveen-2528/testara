@@ -5,6 +5,7 @@ import { useExam } from '../context/ExamContext';
 import { useAuth } from '../context/AuthContext';
 import { EXAM_TEMPLATES } from '../utils/examTemplates';
 import { parseCSVString } from '../utils/csvParser';
+import { Upload, FileJson } from 'lucide-react';
 import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
 import { Users, Plus, LogIn, Copy, Check, Wifi, WifiOff, Crown, User, Zap, BookOpen, ChevronLeft, Globe, Link2, Loader, Unplug, FileSpreadsheet, Sparkles, ClipboardCheck, LayoutTemplate, ChevronRight, Layers, Target, Library, Share2, Monitor } from 'lucide-react';
@@ -37,14 +38,20 @@ const Lobby = () => {
     const [selectedSubject, setSelectedSubject] = useState('');
     const [selectedTopic, setSelectedTopic] = useState('');
     const [topicQuestionCount, setTopicQuestionCount] = useState(15);
-    // Step 3: AI Prompt
+    // Step 3: Load Questions (unified)
+    const [questionSource, setQuestionSource] = useState('ai'); // 'ai', 'json', 'bank', 'mock'
     const [generatedPrompt, setGeneratedPrompt] = useState('');
     const [promptCopied, setPromptCopied] = useState(false);
-    // Step 4: Paste & Import
     const [aiOutput, setAiOutput] = useState('');
+    const [jsonInput, setJsonInput] = useState('');
     const [parsedQuestions, setParsedQuestions] = useState([]);
     const [parseErrors, setParseErrors] = useState([]);
-    // Step 5: Room Config
+    // Question Bank generation
+    const [bankSubject, setBankSubject] = useState('all');
+    const [bankCount, setBankCount] = useState(25);
+    const [bankSubjects, setBankSubjects] = useState([]);
+    const [bankLoading, setBankLoading] = useState(false);
+    // Step 4: Room Config
     const [hostName, setHostName] = useState(user?.name || '');
     const [roomMode, setRoomMode] = useState('friendly');
 
@@ -84,6 +91,16 @@ const Lobby = () => {
                 .catch(() => { });
         }
     }, [user, authFetch]);
+
+    // Fetch bank subjects when user/exam changes
+    useEffect(() => {
+        if (user && selectedExam) {
+            authFetch(`/api/questions?limit=1&exam_type=${selectedExam}`)
+                .then(r => r.json())
+                .then(data => setBankSubjects(data.subjects || []))
+                .catch(() => { });
+        }
+    }, [user, selectedExam, authFetch]);
 
     const currentTemplate = selectedExam ? EXAM_TEMPLATES[selectedExam] : null;
     const currentSubject = currentTemplate?.subjects.find(s => s.id === selectedSubject);
@@ -161,7 +178,6 @@ RULES:
 START OUTPUT WITH THE CSV HEADER ROW DIRECTLY. NO OTHER TEXT.`;
 
         setGeneratedPrompt(prompt);
-        setCreateStep(3);
     };
 
     // Load from saved mock
@@ -174,7 +190,7 @@ START OUTPUT WITH THE CSV HEADER ROW DIRECTLY. NO OTHER TEXT.`;
             const data = await res.json();
             if (!res.ok) throw new Error(data.error);
             setParsedQuestions(data.questions);
-            setCreateStep(5);
+            setCreateStep(4);
         } catch (err) {
             setError(err.message);
         }
@@ -195,11 +211,68 @@ START OUTPUT WITH THE CSV HEADER ROW DIRECTLY. NO OTHER TEXT.`;
         setParseErrors(result.errors);
 
         if (result.questions.length > 0) {
-            // Also save to question bank
             saveToBank(result.questions);
-            setCreateStep(5);
+            setCreateStep(4);
         } else {
             setError('No valid questions found. Check the CSV format.');
+        }
+    };
+
+    // ── JSON Upload/Paste Handler ─────────────────────────────────────
+    const handleJsonParse = () => {
+        setError('');
+        try {
+            const parsed = JSON.parse(jsonInput);
+            let arr = Array.isArray(parsed) ? parsed : null;
+            if (!arr && typeof parsed === 'object' && parsed !== null) {
+                arr = parsed.questions || parsed.data || Object.values(parsed).find(v => Array.isArray(v));
+            }
+            if (!arr || !Array.isArray(arr)) throw new Error('Data must contain an array of questions.');
+
+            const optCount = currentTemplate?.optionsPerQuestion || 4;
+            const formatted = arr.map((q, i) => {
+                if (!q.question && !q.text) throw new Error(`Q${i + 1}: missing 'question' or 'text'.`);
+                let opts = [], keys = [];
+                if (Array.isArray(q.options)) { opts = q.options; }
+                else if (typeof q.options === 'object') { keys = Object.keys(q.options).sort(); opts = keys.map(k => q.options[k]); }
+                else throw new Error(`Q${i + 1}: invalid options.`);
+                if (opts.length !== optCount) throw new Error(`Q${i + 1}: has ${opts.length} options, need ${optCount}.`);
+                let ci = -1;
+                if (q.correct_index !== undefined) ci = q.correct_index;
+                else if (q.correctAnswer !== undefined) ci = q.correctAnswer;
+                else if (q.correct_option !== undefined && keys.length) ci = keys.indexOf(q.correct_option);
+                if (ci < 0 || ci >= optCount) throw new Error(`Q${i + 1}: invalid correct answer.`);
+                return { id: q.id || i, text: q.question || q.text, options: opts, correctAnswer: ci, subject: q.subject || q.subtopic || 'General', explanation: q.explanation || '' };
+            });
+            setParsedQuestions(formatted);
+            setCreateStep(4);
+        } catch (err) { setError(err.message); }
+    };
+
+    // ── Question Bank Generate Handler ────────────────────────────────
+    const handleBankGenerate = async () => {
+        setError('');
+        setBankLoading(true);
+        try {
+            const res = await authFetch('/api/questions/generate-for-room', {
+                method: 'POST',
+                body: JSON.stringify({ examType: selectedExam, subject: bankSubject, count: bankCount }),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error);
+            if (!data.questions || data.questions.length === 0) throw new Error('No questions found in your bank for this selection.');
+            setParsedQuestions(data.questions);
+            setCreateStep(4);
+        } catch (err) { setError(err.message); }
+        setBankLoading(false);
+    };
+
+    const handleFileUpload = (e) => {
+        const file = e.target.files[0];
+        if (file) {
+            const reader = new FileReader();
+            reader.onload = (ev) => setJsonInput(ev.target.result);
+            reader.readAsText(file);
         }
     };
 
@@ -212,7 +285,7 @@ START OUTPUT WITH THE CSV HEADER ROW DIRECTLY. NO OTHER TEXT.`;
         } catch { }
     };
 
-    // ── Step 5: Create Room ──────────────────────────────────────────
+    // ── Step 4: Create Room ──────────────────────────────────────────
     const handleCreateRoom = async () => {
         setError('');
         if (!hostName.trim()) return setError('Enter your display name.');
@@ -521,11 +594,9 @@ START OUTPUT WITH THE CSV HEADER ROW DIRECTLY. NO OTHER TEXT.`;
                             <div className="wizard-step-line" />
                             <div className={`wizard-step ${createStep >= 2 ? 'active' : ''}`} onClick={() => createStep > 2 && setCreateStep(2)}>2. Format</div>
                             <div className="wizard-step-line" />
-                            <div className={`wizard-step ${createStep >= 3 ? 'active' : ''}`} onClick={() => createStep > 3 && setCreateStep(3)}>3. AI Prompt</div>
+                            <div className={`wizard-step ${createStep >= 3 ? 'active' : ''}`} onClick={() => createStep > 3 && setCreateStep(3)}>3. Questions</div>
                             <div className="wizard-step-line" />
-                            <div className={`wizard-step ${createStep >= 4 ? 'active' : ''}`} onClick={() => createStep > 4 && setCreateStep(4)}>4. Import</div>
-                            <div className="wizard-step-line" />
-                            <div className={`wizard-step ${createStep >= 5 ? 'active' : ''}`}>5. Create</div>
+                            <div className={`wizard-step ${createStep >= 4 ? 'active' : ''}`}>4. Create</div>
                         </div>
 
                         {/* ── Step 1: Select Exam ── */}
@@ -624,26 +695,6 @@ START OUTPUT WITH THE CSV HEADER ROW DIRECTLY. NO OTHER TEXT.`;
                                     </div>
                                 )}
 
-                                {/* Also show "Load from Saved Mock" option */}
-                                {filteredMocks.length > 0 && (
-                                    <div className="saved-mock-section">
-                                        <div className="join-divider"><span>OR LOAD SAVED MOCK</span></div>
-                                        <div className="form-row">
-                                            <div className="form-group" style={{ flex: 2 }}>
-                                                <select className="lobby-select" value={selectedMockId} onChange={e => setSelectedMockId(e.target.value)}>
-                                                    <option value="">-- Select Saved Mock --</option>
-                                                    {filteredMocks.map(m => (
-                                                        <option key={m.id} value={m.id}>{m.name} ({m.question_count} Qs)</option>
-                                                    ))}
-                                                </select>
-                                            </div>
-                                            <Button variant="outline" onClick={loadFromMock} disabled={mockLoading || !selectedMockId}>
-                                                {mockLoading ? <Loader size={14} className="spin" /> : <LayoutTemplate size={14} />} Load
-                                            </Button>
-                                        </div>
-                                    </div>
-                                )}
-
                                 {error && <div className="error-message"><span>{error}</span></div>}
 
                                 <div className="step-nav">
@@ -651,36 +702,166 @@ START OUTPUT WITH THE CSV HEADER ROW DIRECTLY. NO OTHER TEXT.`;
                                         <ChevronLeft size={16} /> Back
                                     </Button>
                                     {testFormat && (testFormat === 'full' || selectedSubject) && (testFormat !== 'topic' || selectedTopic) && (
-                                        <Button variant="primary" onClick={generatePrompt}>
-                                            <Sparkles size={16} /> Generate AI Prompt <ChevronRight size={16} />
+                                        <Button variant="primary" onClick={() => { generatePrompt(); setCreateStep(3); }}>
+                                            Next: Load Questions <ChevronRight size={16} />
                                         </Button>
                                     )}
                                 </div>
                             </div>
                         )}
 
-                        {/* ── Step 3: AI Prompt ── */}
+                        {/* ── Step 3: Load Questions (unified with tabs) ── */}
                         {createStep === 3 && (
                             <div className="wizard-content animate-fade-in">
-                                <h3 className="wizard-title">📋 Copy & Paste into AI</h3>
-                                <p className="wizard-subtitle">
-                                    Use <a href="https://chat.deepseek.com" target="_blank" rel="noreferrer">DeepSeek</a>,{' '}
-                                    <a href="https://chat.openai.com" target="_blank" rel="noreferrer">ChatGPT</a>,{' '}
-                                    <a href="https://gemini.google.com" target="_blank" rel="noreferrer">Gemini</a>, or any free AI
-                                </p>
+                                <h3 className="wizard-title">📥 Load Questions</h3>
 
-                                <div className="prompt-box">
-                                    <pre>{generatedPrompt}</pre>
-                                </div>
-
-                                <div className="prompt-actions-row">
-                                    <button className="copy-prompt-btn" onClick={copyPrompt}>
-                                        {promptCopied ? <><ClipboardCheck size={16} /> Copied!</> : <><Copy size={16} /> Copy Prompt</>}
+                                {/* Source tabs */}
+                                <div className="source-tabs">
+                                    <button className={`source-tab ${questionSource === 'ai' ? 'active' : ''}`} onClick={() => setQuestionSource('ai')}>
+                                        <Sparkles size={14} /> AI Prompt
                                     </button>
-                                    <Button variant="primary" onClick={() => setCreateStep(4)}>
-                                        Next: Paste AI Output <ChevronRight size={16} />
-                                    </Button>
+                                    <button className={`source-tab ${questionSource === 'json' ? 'active' : ''}`} onClick={() => setQuestionSource('json')}>
+                                        <FileJson size={14} /> Upload / Paste JSON
+                                    </button>
+                                    <button className={`source-tab ${questionSource === 'bank' ? 'active' : ''}`} onClick={() => setQuestionSource('bank')}>
+                                        <Library size={14} /> Question Bank
+                                    </button>
+                                    {filteredMocks.length > 0 && (
+                                        <button className={`source-tab ${questionSource === 'mock' ? 'active' : ''}`} onClick={() => setQuestionSource('mock')}>
+                                            <LayoutTemplate size={14} /> Saved Mock
+                                        </button>
+                                    )}
                                 </div>
+
+                                {/* ─── AI Prompt Source ─── */}
+                                {questionSource === 'ai' && (
+                                    <div className="source-content animate-fade-in">
+                                        <p className="wizard-subtitle">
+                                            Copy the prompt, paste into{' '}
+                                            <a href="https://chat.deepseek.com" target="_blank" rel="noreferrer">DeepSeek</a>,{' '}
+                                            <a href="https://chat.openai.com" target="_blank" rel="noreferrer">ChatGPT</a>,{' '}
+                                            <a href="https://gemini.google.com" target="_blank" rel="noreferrer">Gemini</a>, or any AI
+                                        </p>
+
+                                        {generatedPrompt && (
+                                            <>
+                                                <div className="prompt-box">
+                                                    <pre>{generatedPrompt}</pre>
+                                                </div>
+                                                <div className="prompt-actions-row">
+                                                    <button className="copy-prompt-btn" onClick={copyPrompt}>
+                                                        {promptCopied ? <><ClipboardCheck size={16} /> Copied!</> : <><Copy size={16} /> Copy Prompt</>}
+                                                    </button>
+                                                </div>
+                                            </>
+                                        )}
+
+                                        <div style={{ marginTop: '1rem' }}>
+                                            <label className="picker-label">Paste AI's CSV Output</label>
+                                            <textarea
+                                                className="json-textarea"
+                                                rows={6}
+                                                value={aiOutput}
+                                                onChange={e => setAiOutput(e.target.value)}
+                                                placeholder="Paste CSV output here..."
+                                            />
+                                        </div>
+
+                                        {parseErrors.length > 0 && (
+                                            <div className="error-message">
+                                                <span>⚠️ {parseErrors.length} issue(s): {parseErrors.slice(0, 2).join('; ')}</span>
+                                            </div>
+                                        )}
+
+                                        <Button variant="primary" className="full-width" onClick={handleParseOutput} disabled={!aiOutput.trim()}>
+                                            <FileSpreadsheet size={16} /> Parse & Import
+                                        </Button>
+                                    </div>
+                                )}
+
+                                {/* ─── JSON Upload/Paste Source ─── */}
+                                {questionSource === 'json' && (
+                                    <div className="source-content animate-fade-in">
+                                        <div className="upload-section">
+                                            <input type="file" id="json-upload-lobby" accept=".json" style={{ display: 'none' }} onChange={handleFileUpload} />
+                                            <label htmlFor="json-upload-lobby" className="upload-label">
+                                                <Upload size={24} />
+                                                <span>Upload questions.json</span>
+                                            </label>
+                                        </div>
+                                        <div className="divider"><span>OR PASTE JSON</span></div>
+                                        <textarea
+                                            className="json-textarea"
+                                            rows={6}
+                                            value={jsonInput}
+                                            onChange={e => setJsonInput(e.target.value)}
+                                            placeholder='[{"question": "...", "options": {"A":"...", ...}, "correct_option": "A"}]'
+                                        />
+                                        <Button variant="primary" className="full-width" onClick={handleJsonParse} disabled={!jsonInput.trim()}>
+                                            <FileJson size={16} /> Validate & Load Questions
+                                        </Button>
+                                    </div>
+                                )}
+
+                                {/* ─── Question Bank Source ─── */}
+                                {questionSource === 'bank' && (
+                                    <div className="source-content animate-fade-in">
+                                        <p className="wizard-subtitle">Generate a random test from your saved Question Bank</p>
+
+                                        {bankSubjects.length === 0 ? (
+                                            <div className="error-message">
+                                                <span>No questions in your bank for this exam type. Import questions first via AI Prompt, JSON upload, or the Question Bank page.</span>
+                                            </div>
+                                        ) : (
+                                            <>
+                                                <div className="form-group">
+                                                    <label>Subject</label>
+                                                    <select className="lobby-select" value={bankSubject} onChange={e => setBankSubject(e.target.value)}>
+                                                        <option value="all">All Subjects</option>
+                                                        {bankSubjects.map(s => (
+                                                            <option key={s} value={s}>{s}</option>
+                                                        ))}
+                                                    </select>
+                                                </div>
+                                                <div className="form-group">
+                                                    <label>Number of Questions</label>
+                                                    <input
+                                                        type="number"
+                                                        className="lobby-input"
+                                                        value={bankCount}
+                                                        onChange={e => setBankCount(Math.max(1, parseInt(e.target.value) || 1))}
+                                                        min={1}
+                                                        max={200}
+                                                        style={{ maxWidth: '120px' }}
+                                                    />
+                                                </div>
+                                                <Button variant="primary" className="full-width" onClick={handleBankGenerate} disabled={bankLoading}>
+                                                    {bankLoading ? <><Loader size={16} className="spin" /> Generating...</> : <><Library size={16} /> Generate from Bank</>}
+                                                </Button>
+                                            </>
+                                        )}
+                                    </div>
+                                )}
+
+                                {/* ─── Saved Mock Source ─── */}
+                                {questionSource === 'mock' && filteredMocks.length > 0 && (
+                                    <div className="source-content animate-fade-in">
+                                        <p className="wizard-subtitle">Load questions from a pre-built mock test</p>
+                                        <div className="form-group">
+                                            <select className="lobby-select" value={selectedMockId} onChange={e => setSelectedMockId(e.target.value)}>
+                                                <option value="">-- Select Saved Mock --</option>
+                                                {filteredMocks.map(m => (
+                                                    <option key={m.id} value={m.id}>{m.name} ({m.question_count} Qs)</option>
+                                                ))}
+                                            </select>
+                                        </div>
+                                        <Button variant="primary" className="full-width" onClick={loadFromMock} disabled={mockLoading || !selectedMockId}>
+                                            {mockLoading ? <><Loader size={14} className="spin" /> Loading...</> : <><LayoutTemplate size={16} /> Load Mock</>}
+                                        </Button>
+                                    </div>
+                                )}
+
+                                {error && <div className="error-message"><span>{error}</span></div>}
 
                                 <div className="step-nav">
                                     <Button variant="ghost" onClick={() => setCreateStep(2)}>
@@ -690,47 +871,13 @@ START OUTPUT WITH THE CSV HEADER ROW DIRECTLY. NO OTHER TEXT.`;
                             </div>
                         )}
 
-                        {/* ── Step 4: Paste & Import ── */}
+                        {/* ── Step 4: Room Config & Create ── */}
                         {createStep === 4 && (
-                            <div className="wizard-content animate-fade-in">
-                                <h3 className="wizard-title">📥 Paste AI's CSV Output</h3>
-                                <p className="wizard-subtitle">Copy the entire CSV output from the AI and paste below</p>
-
-                                <textarea
-                                    className="json-textarea"
-                                    rows={8}
-                                    value={aiOutput}
-                                    onChange={e => setAiOutput(e.target.value)}
-                                    placeholder="Paste CSV output here..."
-                                />
-
-                                {parseErrors.length > 0 && (
-                                    <div className="error-message">
-                                        <span>⚠️ {parseErrors.length} issue(s): {parseErrors.slice(0, 2).join('; ')}</span>
-                                    </div>
-                                )}
-
-                                {error && <div className="error-message"><span>{error}</span></div>}
-
-                                <Button variant="primary" className="full-width" onClick={handleParseOutput} disabled={!aiOutput.trim()}>
-                                    <FileSpreadsheet size={16} /> Parse & Import to Question Bank
-                                </Button>
-
-                                <div className="step-nav">
-                                    <Button variant="ghost" onClick={() => setCreateStep(3)}>
-                                        <ChevronLeft size={16} /> Back
-                                    </Button>
-                                </div>
-                            </div>
-                        )}
-
-                        {/* ── Step 5: Room Config & Create ── */}
-                        {createStep === 5 && (
                             <div className="wizard-content animate-fade-in">
                                 <h3 className="wizard-title">🚀 Create Your Room</h3>
 
                                 <div className="questions-loaded-badge">
-                                    ✅ {parsedQuestions.length} questions loaded & saved to bank
+                                    ✅ {parsedQuestions.length} questions loaded
                                 </div>
 
                                 <div className="form-group">

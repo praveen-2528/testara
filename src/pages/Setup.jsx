@@ -5,7 +5,7 @@ import { useAuth } from '../context/AuthContext';
 import { EXAM_TEMPLATES } from '../utils/examTemplates';
 import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
-import { BookOpen, Upload, FileJson, AlertCircle, Users, Folder, BarChart3, LogOut, Settings as SettingsIcon, Trophy, Library, LayoutTemplate, Sparkles } from 'lucide-react';
+import { BookOpen, Upload, FileJson, AlertCircle, Users, Folder, BarChart3, LogOut, Settings as SettingsIcon, Trophy, Library, LayoutTemplate, Sparkles, Loader } from 'lucide-react';
 import './Setup.css';
 
 const Setup = () => {
@@ -24,6 +24,12 @@ const Setup = () => {
     const [markingPreset, setMarkingPreset] = useState('ssc'); // 'ssc', 'none', 'custom'
     const [customMarks, setCustomMarks] = useState({ correct: 2, incorrect: -0.5, unattempted: 0 });
 
+    // Question Bank generation
+    const [bankSubject, setBankSubject] = useState('all');
+    const [bankCount, setBankCount] = useState(25);
+    const [bankSubjects, setBankSubjects] = useState([]);
+    const [bankLoading, setBankLoading] = useState(false);
+
     const markingPresets = {
         ssc: { correct: 2, incorrect: -0.5, unattempted: 0, label: 'SSC Standard (+2 / -0.50)' },
         none: { correct: 1, incorrect: 0, unattempted: 0, label: 'No Negative (+1 / 0)' },
@@ -37,6 +43,16 @@ const Setup = () => {
                 .catch(err => console.error("Failed to fetch mocks", err));
         }
     }, [user, authFetch]);
+
+    // Fetch bank subjects when exam type changes
+    useEffect(() => {
+        if (user && examType) {
+            authFetch(`/api/questions?limit=1&exam_type=${examType}`)
+                .then(r => r.json())
+                .then(data => setBankSubjects(data.subjects || []))
+                .catch(() => { });
+        }
+    }, [user, examType, authFetch]);
 
     const getActiveScheme = () => {
         if (markingPreset === 'custom') return customMarks;
@@ -159,6 +175,23 @@ const Setup = () => {
         }
     };
 
+    const startFromBank = async () => {
+        setError('');
+        setBankLoading(true);
+        try {
+            const res = await authFetch('/api/questions/generate-for-room', {
+                method: 'POST',
+                body: JSON.stringify({ examType, subject: bankSubject, count: bankCount }),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error);
+            if (!data.questions || data.questions.length === 0) throw new Error('No questions found. Import questions first.');
+            updateExamState({ questions: data.questions, testStarted: true, markingScheme: getActiveScheme() });
+            navigate('/test');
+        } catch (err) { setError(err.message); }
+        setBankLoading(false);
+    };
+
     const handleFileUpload = (e) => {
         const file = e.target.files[0];
         if (file) {
@@ -278,6 +311,36 @@ const Setup = () => {
                                 ></textarea>
                             </div>
                         </div>
+
+                        {/* Generate from Question Bank */}
+                        <div className="divider"><span>OR FROM QUESTION BANK</span></div>
+                        {bankSubjects.length > 0 ? (
+                            <div className="bank-generate-section">
+                                <div className="gen-row">
+                                    <select value={bankSubject} onChange={e => setBankSubject(e.target.value)}>
+                                        <option value="all">All Subjects</option>
+                                        {bankSubjects.map(s => (
+                                            <option key={s} value={s}>{s}</option>
+                                        ))}
+                                    </select>
+                                    <input
+                                        type="number"
+                                        value={bankCount}
+                                        onChange={e => setBankCount(Math.max(1, parseInt(e.target.value) || 1))}
+                                        min={1}
+                                        max={200}
+                                        style={{ maxWidth: '80px' }}
+                                    />
+                                    <Button variant="primary" onClick={startFromBank} disabled={bankLoading}>
+                                        {bankLoading ? <><Loader size={14} className="spin" /> Loading...</> : <><Library size={14} /> Generate from Bank</>}
+                                    </Button>
+                                </div>
+                            </div>
+                        ) : (
+                            <p style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', textAlign: 'center' }}>
+                                No questions in bank for this exam type. <span style={{ cursor: 'pointer', color: '#a5b4fc' }} onClick={() => navigate('/ai-generator')}>Import some →</span>
+                            </p>
+                        )}
 
                         {/* Marking Scheme Picker */}
                         <div className="marking-section">
