@@ -5,7 +5,7 @@ import { useRoom } from '../context/RoomContext';
 import { saveExam } from '../utils/storage';
 import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
-import { Clock, ChevronLeft, ChevronRight, CheckCircle, XCircle, List, Play, Pause, SaveAll, Bookmark, Save, Users, Pencil } from 'lucide-react';
+import { Clock, ChevronLeft, ChevronRight, CheckCircle, XCircle, List, Play, Pause, SaveAll, Bookmark, Save, Users, Pencil, Eye, EyeOff } from 'lucide-react';
 import FriendlyChat from '../components/FriendlyChat';
 import WritingPad from '../components/WritingPad';
 import VoiceChat from '../components/VoiceChat';
@@ -23,6 +23,7 @@ const Test = () => {
     const [isPaused, setIsPaused] = useState(false);
     const [saveToast, setSaveToast] = useState(false);
     const [showPad, setShowPad] = useState(false);
+    const [padShared, setPadShared] = useState(false); // host-controlled privacy toggle
     const autoSaveRef = useRef(null);
 
     // Friendly mode states
@@ -111,11 +112,16 @@ const Test = () => {
         room.socket.on('friendlyNextQuestion', onNextQuestion);
         room.socket.on('friendlyForceSubmit', onForceSubmit);
 
+        // Pad privacy toggle from host
+        const onPadPrivacy = ({ shared }) => setPadShared(shared);
+        room.socket.on('padPrivacy', onPadPrivacy);
+
         return () => {
             room.socket.off('friendlyAnswerStatus', onAnswerStatus);
             room.socket.off('friendlyReveal', onReveal);
             room.socket.off('friendlyNextQuestion', onNextQuestion);
             room.socket.off('friendlyForceSubmit', onForceSubmit);
+            room.socket.off('padPrivacy', onPadPrivacy);
         };
     }, [isFriendly, room.socket, updateExamState]);
 
@@ -334,6 +340,29 @@ const Test = () => {
                         <Pencil size={16} /> {showPad ? 'Hide Pad' : 'Scratch Pad'}
                     </button>
 
+                    {/* Privacy toggle — host only, multiplayer only */}
+                    {isMultiplayer && room.isHost && showPad && (
+                        <button
+                            className={`pad-toggle-btn ${padShared ? 'active' : ''}`}
+                            onClick={() => {
+                                const next = !padShared;
+                                setPadShared(next);
+                                room.socket?.emit('padPrivacy', { code: roomCode, shared: next });
+                            }}
+                            title={padShared ? 'Make Pad Private' : 'Share Pad With Room'}
+                        >
+                            {padShared ? <Eye size={16} /> : <EyeOff size={16} />}
+                            {padShared ? 'Shared' : 'Private'}
+                        </button>
+                    )}
+
+                    {/* Non-host indicator */}
+                    {isMultiplayer && !room.isHost && showPad && padShared && (
+                        <span className="pad-toggle-btn active" style={{ cursor: 'default' }}>
+                            <Eye size={16} /> Shared
+                        </span>
+                    )}
+
                     <button
                         className="mobile-palette-toggle btn btn-ghost btn-sm"
                         onClick={() => setShowPalette(!showPalette)}
@@ -506,7 +535,7 @@ const Test = () => {
                         <div className="writing-pad-panel">
                             <WritingPad
                                 questionIndex={currentQuestionIndex}
-                                isShared={isFriendly && friendlyRevealed}
+                                isShared={isMultiplayer && padShared && (isFriendly ? friendlyRevealed : true)}
                                 socket={room.socket}
                                 roomCode={roomCode}
                                 playerColor={isFriendly ? '#a5b4fc' : undefined}

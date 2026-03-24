@@ -1102,6 +1102,11 @@ io.on('connection', (socket) => {
         socket.to(code).emit('padUndo', { questionIndex, playerId });
     });
 
+    socket.on('padPrivacy', ({ code, shared }) => {
+        if (!code) return;
+        socket.to(code).emit('padPrivacy', { shared });
+    });
+
     // ── Voice Chat: WebRTC Signaling ────────────────────────────────
     socket.on('voiceJoin', ({ code, peerName }) => {
         if (!code) return;
